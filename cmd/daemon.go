@@ -1,0 +1,87 @@
+package cmd
+
+import (
+	"flag"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+
+	"github.com/Sirupsen/logrus"
+	"github.com/gianarb/orbiter/api"
+	"github.com/gianarb/orbiter/core"
+)
+
+type DaemonCmd struct {
+}
+
+func (c *DaemonCmd) Run(args []string) int {
+	logrus.Info("orbiter started")
+	var port string
+	var configPath string
+	var debug bool
+	cmdFlags := flag.NewFlagSet("event", flag.ExitOnError)
+	cmdFlags.StringVar(&port, "port", ":8000", "port")
+	cmdFlags.StringVar(&configPath, "config", "/etc/deamon.yml", "config")
+	cmdFlags.BoolVar(&debug, "debug", false, "debug")
+	if err := cmdFlags.Parse(args); err != nil {
+		logrus.WithField("error", err).Warn("Problem to parse arguments.")
+		return 1
+	}
+	if debug == true {
+		logrus.SetLevel(logrus.DebugLevel)
+		logrus.Debug("Daemon started in debug mode")
+	}
+	config, err := readConfiguration(configPath)
+	if err != nil {
+		logrus.WithField("error", err).Warn("Configuration file malformed.")
+		return 1
+	}
+	core, err := core.NewCore(config.AutoscalersConf)
+	if err != nil {
+		logrus.WithField("error", err).Warn(err)
+		return 1
+	}
+	go func() {
+		sigchan := make(chan os.Signal, 10)
+		signal.Notify(sigchan, os.Interrupt)
+		<-sigchan
+		logrus.Info("Stopping and cleaning. Bye!")
+		os.Exit(0)
+	}()
+	router := api.GetRouter(core)
+	logrus.Infof("API Server run on port %s", port)
+	http.ListenAndServe(port, router)
+	return 0
+}
+
+func (c *DaemonCmd) Help() string {
+	helpText := `
+Usage: start gourmet API handler.
+	Options:
+	-debug_level=info				Servert port
+	-port=:8000				Servert port
+	-config=/etc/daemon.yml	Configuration path
+																											`
+	return strings.TrimSpace(helpText)
+}
+
+func (r *DaemonCmd) Synopsis() string {
+	return "Start core daemon"
+}
+
+func readConfiguration(path string) (core.Conf, error) {
+	var config core.Conf
+	filename, _ := filepath.Abs(path)
+	yamlFile, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return config, err
+	}
+	config, err = core.ParseYAMLConfiguration(yamlFile)
+	if err != nil {
+		return config, err
+	}
+	return config, nil
+}
