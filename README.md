@@ -1,3 +1,6 @@
+[![Build
+Status](https://travis-ci.org/gianarb/orbiter.svg?branch=master)](https://travis-ci.org/gianarb/orbiter)
+
 Public and private cloud or different technologies like virtual machine or
 containers. Our applications and our environments require to be resilient
 doesn't matter where they are or which services are you using.
