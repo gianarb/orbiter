@@ -78,3 +78,31 @@ scale it can call the outscaler to persist the right action
 curl -v -d '{"direction": true}' \
     http://localhost:8000/handle/infra_scale/docker
 ```
+
+## Embeddable
+This project is trying to provide also an easy API to maintain a lot complexy
+and clean code base in order to allow you to use `orbiter` as project for your
+applications.
+OpenStack, Kubernets all of them have a sort of autoscaling feature that you can
+use. The idea is to keep this complexy out of your deployment tools. You can
+just implement `orbiter`.
+Another use case is a self-deployed application. [Kelsey
+Hightower](https://www.youtube.com/watch?v=nhmAyZNlECw) had a talk about this
+idea. I am still not sure that can be real in those terms but we are already
+moving something in our applications that before was in external system as
+monitoring, healthcheck why not the deployment part?
+
+```go
+package scalingallthethings
+
+import (
+	"github.com/gianarb/orbiter/autoscaler"
+	"github.com/gianarb/orbiter/provider"
+)
+
+func CreateAutoScaler() *autoscaler.Autoscaler{
+    p, _ := provider.NewProvider("swarm", map[string]string{})
+    a, _ := autoscaler.NewAutoscaler(p, "name-service", 4, 3)
+    return a
+}
+```
