@@ -15,7 +15,7 @@ It is based on plugins called `provider`. At the moment we implemented:
 * DigitalOcean
 
 ```sh
-orbiter daemon --c config.yml
+orbiter daemon -config config.yml
 ```
 Orbiter is a daemon that use a YAML configuration file to starts one or more
 autoscaler and it exposes an HTTP API to trigger scaling up or down.
