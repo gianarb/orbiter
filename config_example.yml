@@ -1,0 +1,45 @@
+autoscalers:
+  infra-aws:
+    provider: aws_ec2
+    parameters:
+      credentials_file: ~/.aws/credentials
+      credentials_profile: default
+      region: eu-west
+      image: ubuntu
+      subnet_id: subnet-39dc854e
+      instance_type: t2.micro
+      key_name: orbiter-key
+      user_data: |
+        sudo apt-get update
+        wget -qO- https://get.docker.com/ | sh
+        docker swarm join --token 4gs5g45h464h4n4545 10.0.5.2
+    policies:
+      general:
+        up: 4
+        down: 3
+  events:
+    provider: swarm
+    parameters:
+    policies:
+      php:
+        up: 4
+        down: 3
+  infra_scale:
+    provider: digitalocean
+    parameters:
+      token: zerbzrbzrtnxrtnx
+      region: nyc3
+      size: 512mb
+      image: ubuntu-14-04-x64
+      key_id: 163422
+      # https://www.digitalocean.com/community/tutorials/an-introduction-to-cloud-config-scripting
+      userdata: |
+        #cloud-config
+
+        runcmd:
+          - sudo apt-get update
+          - wget -qO- https://get.docker.com/ | sh
+    policies:
+      frontend:
+        up: 2
+        down: 3
