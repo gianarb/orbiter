@@ -1,9 +1,7 @@
 package provider
 
 import (
-	"fmt"
-	"log"
-
+	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -37,23 +35,24 @@ func NewAwsEc2Provider(c map[string]string) (autoscaler.Provider, error) {
 func (p AwsEc2Provider) Scale(serviceId string, target int, direction bool) error {
 	if direction == true {
 		// Specify the details of the instance that you want to create.
-		runResult, err := p.client.RunInstances(&ec2.RunInstancesInput{
+		_, err := p.client.RunInstances(&ec2.RunInstancesInput{
 			// An Amazon Linux AMI ID for t2.micro instances in the us-west-2 region
-			ImageId:        aws.String("ami-e7527ed7"),
-			InstanceType:   aws.String("t2.micro"),
-			MinCount:       aws.Int64(1),
-			MaxCount:       aws.Int64(1),
-			UserData:       "",
+			ImageId:      aws.String("ami-e7527ed7"),
+			InstanceType: aws.String("t2.micro"),
+			MinCount:     aws.Int64(2),
+			MaxCount:     aws.Int64(2),
+			//UserData:       "",
 			SecurityGroups: []*string{},
-			SubnetId:       "",
+			//SubnetId:       "",
 		})
 
 		if err != nil {
-			log.Println("Could not create instance", err)
-			return
+			logrus.WithFields(logrus.Fields{
+				"provider": "aws_ec2",
+				"error":    err,
+			}).Warn("We are not able to create new instances")
+			return err
 		}
-
-		log.Println("Created instance", *runResult.Instances[0].InstanceId)
 	} else {
 		params := &ec2.StopInstancesInput{
 			InstanceIds: []*string{ // Required
@@ -63,17 +62,17 @@ func (p AwsEc2Provider) Scale(serviceId string, target int, direction bool) erro
 			DryRun: aws.Bool(true),
 			Force:  aws.Bool(true),
 		}
-		resp, err := p.client.StopInstances(params)
-
+		_, err := p.client.StopInstances(params)
 		if err != nil {
-			// Print the error, cast err to awserr.Error to get the Code and
-			// Message from an error.
-			fmt.Println(err.Error())
-			return
+			logrus.WithFields(logrus.Fields{
+				"provider": "aws_ec2",
+				"error":    err,
+			}).Warn("We are not able to delete the instances")
+			return err
 		}
-
 	}
-
+	return nil
 }
 func (p AwsEc2Provider) isGoodToBeDeleted(droplet godo.Droplet, serviceId string) bool {
+	return true
 }
