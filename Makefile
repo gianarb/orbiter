@@ -8,7 +8,11 @@ binaries:
 	@echo "Compiling..."
 	@mkdir -p ./bin
 	@go build -i -o ./bin/orbiter
+	@CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -i -o ./bin/orbiter
 	@echo "All done! The binaries is in ./bin let's have fun!"
+
+build/docker: binaries
+	@docker build -t gianarb/orbiter:latest .
 
 vet: ## run go vet
 	@test -z "$$(go vet ${PACKAGES} 2>&1 | grep -v '*composite literal uses unkeyed fields|exit status 0)' | tee /dev/stderr)"
