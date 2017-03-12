@@ -106,3 +106,15 @@ func CreateAutoScaler() *autoscaler.Autoscaler{
     return a
 }
 ```
+
+## With docker
+
+```sh
+docker run -it -v ${PWD}/your.yml:/etc/orbiter.yml -p 8000:8000 gianarb/orbiter
+```
+We are supporting an imag `gianarb/orbiter` in hub.docker.com. You can run it
+with your configuration.
+
+In this example I am using volumes but if you have a Docker Swarm 1.13 up and
+running you can use secrets.
+
