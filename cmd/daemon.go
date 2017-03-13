@@ -15,6 +15,7 @@ import (
 )
 
 type DaemonCmd struct {
+	EventChannel chan *logrus.Entry
 }
 
 func (c *DaemonCmd) Run(args []string) int {
@@ -51,7 +52,7 @@ func (c *DaemonCmd) Run(args []string) int {
 		logrus.Info("Stopping and cleaning. Bye!")
 		os.Exit(0)
 	}()
-	router := api.GetRouter(core)
+	router := api.GetRouter(core, c.EventChannel)
 	logrus.Infof("API Server run on port %s", port)
 	http.ListenAndServe(port, router)
 	return 0
