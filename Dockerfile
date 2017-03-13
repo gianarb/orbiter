@@ -1,4 +1,4 @@
-FROM alpine
+FROM debian:sid
 
 ADD ./bin/orbiter /opt/orbiter
 
