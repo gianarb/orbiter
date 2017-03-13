@@ -10,11 +10,13 @@ import (
 func Events(eventChannel chan *logrus.Entry) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logrus.Info("New events")
+		formatter := &logrus.JSONFormatter{}
 		flusher, _ := w.(http.Flusher)
 		for {
 			e := <-eventChannel
-			fmt.Fprintf(w, "Ciao %d\n", e.Message)
-			flusher.Flush() // Trigger "chunked" encoding and send a chunk...
+			b, _ := formatter.Format(e)
+			fmt.Fprintf(w, string(b))
+			flusher.Flush()
 		}
 	}
 }
