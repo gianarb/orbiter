@@ -11,7 +11,7 @@ type Core struct {
 	Autoscalers autoscaler.Autoscalers
 }
 
-func NewCore(c map[string]AutoscalerConf) (Core, error) {
+func NewCoreByConfig(c map[string]AutoscalerConf) (Core, error) {
 	scalers := autoscaler.Autoscalers{}
 	var core Core
 	for scalerName, scaler := range c {

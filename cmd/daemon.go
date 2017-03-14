@@ -25,7 +25,7 @@ func (c *DaemonCmd) Run(args []string) int {
 	var debug bool
 	cmdFlags := flag.NewFlagSet("event", flag.ExitOnError)
 	cmdFlags.StringVar(&port, "port", ":8000", "port")
-	cmdFlags.StringVar(&configPath, "config", "/etc/deamon.yml", "config")
+	cmdFlags.StringVar(&configPath, "config", "", "config")
 	cmdFlags.BoolVar(&debug, "debug", false, "debug")
 	if err := cmdFlags.Parse(args); err != nil {
 		logrus.WithField("error", err).Warn("Problem to parse arguments.")
@@ -35,15 +35,22 @@ func (c *DaemonCmd) Run(args []string) int {
 		logrus.SetLevel(logrus.DebugLevel)
 		logrus.Debug("Daemon started in debug mode")
 	}
-	config, err := readConfiguration(configPath)
-	if err != nil {
-		logrus.WithField("error", err).Warn("Configuration file malformed.")
-		return 1
-	}
-	core, err := core.NewCore(config.AutoscalersConf)
-	if err != nil {
-		logrus.WithField("error", err).Warn(err)
-		return 1
+	var coreEngine core.Core
+	if configPath != "" {
+		config, err := readConfiguration(configPath)
+		if err != nil {
+			logrus.WithField("error", err).Warn("Configuration file malformed.")
+			return 1
+		}
+		logrus.Infof("Starting from configuration file located %s", configPath)
+		coreEngine, err = core.NewCoreByConfig(config.AutoscalersConf)
+		if err != nil {
+			logrus.WithField("error", err).Warn(err)
+			return 1
+		}
+	} else {
+		logrus.Info("Starting in auto-detection mode.")
+		coreEngine, err = core.Autodetect()
 	}
 	go func() {
 		sigchan := make(chan os.Signal, 10)
@@ -52,7 +59,7 @@ func (c *DaemonCmd) Run(args []string) int {
 		logrus.Info("Stopping and cleaning. Bye!")
 		os.Exit(0)
 	}()
-	router := api.GetRouter(core, c.EventChannel)
+	router := api.GetRouter(coreEngine, c.EventChannel)
 	logrus.Infof("API Server run on port %s", port)
 	http.ListenAndServe(port, router)
 	return 0

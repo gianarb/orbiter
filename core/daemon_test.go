@@ -29,7 +29,7 @@ func TestNewCore(t *testing.T) {
 			},
 		},
 	}
-	core, err := NewCore(conf)
+	core, err := NewCoreByConfig(conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestGetSingleAutoscaler(t *testing.T) {
 			},
 		},
 	}
-	core, _ := NewCore(conf)
+	core, _ := NewCoreByConfig(conf)
 	_, ok := core.Autoscalers["second/micro"]
 	if ok == false {
 		t.Fatal("micro exist")
@@ -89,7 +89,7 @@ func TestNewCoreWithUnsupportedProvider(t *testing.T) {
 			},
 		},
 	}
-	_, err := NewCore(conf)
+	_, err := NewCoreByConfig(conf)
 	if err.Error() != "lalala not supported." {
 		t.Fatal(err)
 	}
