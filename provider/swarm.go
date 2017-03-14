@@ -68,10 +68,11 @@ func (p SwarmProvider) Scale(serviceId string, target int, direction bool) error
 
 	spec := service.Spec
 	var ptrFromSystem uint64
+	base := p.calculateActiveTasks(tasks)
 	if direction == true {
-		ptrFromSystem = uint64(len(tasks) + target)
+		ptrFromSystem = uint64(base + target)
 	} else {
-		ptrFromSystem = uint64(len(tasks) - target)
+		ptrFromSystem = uint64(base - target)
 	}
 	spec.Mode.Replicated.Replicas = &ptrFromSystem
 	_, err = p.dockerClient.ServiceUpdate(ctx, serviceId, service.Version, spec, types.ServiceUpdateOptions{})
@@ -85,13 +86,34 @@ func (p SwarmProvider) Scale(serviceId string, target int, direction bool) error
 
 	logrus.WithFields(logrus.Fields{
 		"provider": "swarm",
-	}).Debugf("Service %s scaled.", serviceId)
+	}).Debugf("Service %s scaled from %d to %d", serviceId, base, ptrFromSystem)
 	return nil
 }
 
+// This function validate if a request is acceptable or not.
 func (p *SwarmProvider) isAcceptable(tasks []swarm.Task, target int, direction bool) error {
-	if len(tasks) < target && direction == false {
+	if p.calculateActiveTasks(tasks) < target && direction == false {
 		return errors.New(fmt.Sprintf("I can not scale down because it has only %d running.", target))
 	}
 	return nil
+}
+
+// Calculate the number of tasks to use as started poit to scale up or down.
+// This function is necesarry because we need to exclude shutted down or
+// rejected tasks.
+func (p *SwarmProvider) calculateActiveTasks(tasks []swarm.Task) int {
+	c := 0
+	for _, task := range tasks {
+		if task.Status.State == swarm.TaskStateNew ||
+			task.Status.State == swarm.TaskStateAccepted ||
+			task.Status.State == swarm.TaskStatePending ||
+			task.Status.State == swarm.TaskStateAssigned ||
+			task.Status.State == swarm.TaskStateStarting ||
+			task.Status.State == swarm.TaskStatePreparing ||
+			task.Status.State == swarm.TaskStateReady ||
+			task.Status.State == swarm.TaskStateRunning {
+			c = c + 1
+		}
+	}
+	return c
 }
