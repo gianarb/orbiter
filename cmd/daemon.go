@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/gianarb/orbiter/api"
+	"github.com/gianarb/orbiter/autoscaler"
 	"github.com/gianarb/orbiter/core"
 )
 
@@ -29,28 +30,35 @@ func (c *DaemonCmd) Run(args []string) int {
 	cmdFlags.BoolVar(&debug, "debug", false, "debug")
 	if err := cmdFlags.Parse(args); err != nil {
 		logrus.WithField("error", err).Warn("Problem to parse arguments.")
-		return 1
+		os.Exit(1)
 	}
 	if debug == true {
 		logrus.SetLevel(logrus.DebugLevel)
 		logrus.Debug("Daemon started in debug mode")
 	}
-	var coreEngine core.Core
+	coreEngine := core.Core{
+		Autoscalers: autoscaler.Autoscalers{},
+	}
+	var err error
 	if configPath != "" {
 		config, err := readConfiguration(configPath)
 		if err != nil {
 			logrus.WithField("error", err).Warn("Configuration file malformed.")
-			return 1
+			os.Exit(1)
 		}
 		logrus.Infof("Starting from configuration file located %s", configPath)
-		coreEngine, err = core.NewCoreByConfig(config.AutoscalersConf)
+		err = core.NewCoreByConfig(config.AutoscalersConf, &coreEngine)
 		if err != nil {
 			logrus.WithField("error", err).Warn(err)
-			return 1
+			os.Exit(1)
 		}
 	} else {
 		logrus.Info("Starting in auto-detection mode.")
-		coreEngine, err = core.Autodetect()
+		err = core.Autodetect(&coreEngine)
+		if err != nil {
+			logrus.WithField("error", err).Info(err)
+			os.Exit(0)
+		}
 	}
 	go func() {
 		sigchan := make(chan os.Signal, 10)

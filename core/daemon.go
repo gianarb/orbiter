@@ -11,20 +11,17 @@ type Core struct {
 	Autoscalers autoscaler.Autoscalers
 }
 
-func NewCoreByConfig(c map[string]AutoscalerConf) (Core, error) {
+func NewCoreByConfig(c map[string]AutoscalerConf, core *Core) error {
 	scalers := autoscaler.Autoscalers{}
-	var core Core
 	for scalerName, scaler := range c {
 		p, err := provider.NewProvider(scaler.Provider, scaler.Parameters)
 		if err != nil {
-			return core, err
+			return err
 		}
 		for serviceName, policy := range scaler.Policies {
 			scalers[fmt.Sprintf("%s/%s", scalerName, serviceName)] = autoscaler.NewAutoscaler(p, serviceName, policy.Up, policy.Down)
 		}
 	}
-	core = Core{
-		Autoscalers: scalers,
-	}
-	return core, nil
+	core.Autoscalers = scalers
+	return nil
 }
