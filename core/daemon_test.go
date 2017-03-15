@@ -1,8 +1,15 @@
 package core
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gianarb/orbiter/autoscaler"
+)
 
 func TestNewCore(t *testing.T) {
+	core := Core{
+		Autoscalers: autoscaler.Autoscalers{},
+	}
 	conf := map[string]AutoscalerConf{
 		"first-scaler": AutoscalerConf{
 			Provider:   "fake",
@@ -29,7 +36,7 @@ func TestNewCore(t *testing.T) {
 			},
 		},
 	}
-	core, err := NewCoreByConfig(conf)
+	err := NewCoreByConfig(conf, &core)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +46,9 @@ func TestNewCore(t *testing.T) {
 }
 
 func TestGetSingleAutoscaler(t *testing.T) {
+	core := Core{
+		Autoscalers: autoscaler.Autoscalers{},
+	}
 	conf := map[string]AutoscalerConf{
 		"second": AutoscalerConf{
 			Provider:   "fake",
@@ -55,7 +65,7 @@ func TestGetSingleAutoscaler(t *testing.T) {
 			},
 		},
 	}
-	core, _ := NewCoreByConfig(conf)
+	NewCoreByConfig(conf, &core)
 	_, ok := core.Autoscalers["second/micro"]
 	if ok == false {
 		t.Fatal("micro exist")
@@ -63,6 +73,9 @@ func TestGetSingleAutoscaler(t *testing.T) {
 }
 
 func TestNewCoreWithUnsupportedProvider(t *testing.T) {
+	core := Core{
+		Autoscalers: autoscaler.Autoscalers{},
+	}
 	conf := map[string]AutoscalerConf{
 		"second-scaler": AutoscalerConf{
 			Provider:   "fake",
@@ -89,7 +102,7 @@ func TestNewCoreWithUnsupportedProvider(t *testing.T) {
 			},
 		},
 	}
-	_, err := NewCoreByConfig(conf)
+	err := NewCoreByConfig(conf, &core)
 	if err.Error() != "lalala not supported." {
 		t.Fatal(err)
 	}
