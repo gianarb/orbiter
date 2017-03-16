@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 type DigitalOceanProvider struct {
 	client *godo.Client
 	config map[string]string
+	ctx    context.Context
 }
 
 func NewDigitalOceanProvider(c map[string]string) (autoscaler.Provider, error) {
@@ -27,6 +29,7 @@ func NewDigitalOceanProvider(c map[string]string) (autoscaler.Provider, error) {
 	p := DigitalOceanProvider{
 		client: client,
 		config: c,
+		ctx:    context.Background(),
 	}
 	return p, nil
 }
@@ -52,7 +55,7 @@ func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool
 						Slug: p.config["image"],
 					},
 				}
-				droplet, _, err := p.client.Droplets.Create(createRequest)
+				droplet, _, err := p.client.Droplets.Create(p.ctx, createRequest)
 				responseChannel <- response{
 					err:       err,
 					droplet:   droplet,
@@ -62,7 +65,7 @@ func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool
 		}
 	} else {
 		// TODO(gianarb): This can not work forever. We need to have proper pagination
-		droplets, _, err := p.client.Droplets.List(&godo.ListOptions{
+		droplets, _, err := p.client.Droplets.List(p.ctx, &godo.ListOptions{
 			Page:    1,
 			PerPage: 500,
 		})
@@ -80,7 +83,7 @@ func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool
 			if p.isGoodToBeDeleted(single, serviceId) && ii < target {
 				go func() {
 					defer wg.Done()
-					_, err := p.client.Droplets.Delete(single.ID)
+					_, err := p.client.Droplets.Delete(p.ctx, single.ID)
 					responseChannel <- response{
 						err:       err,
 						droplet:   &single,
@@ -143,7 +146,7 @@ func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool
 func (p DigitalOceanProvider) isGoodToBeDeleted(droplet godo.Droplet, serviceId string) bool {
 	if droplet.Status == "active" && strings.Contains(strings.ToUpper(droplet.Name), strings.ToUpper(serviceId)) {
 		// TODO(gianarb): This can not work forever. We need to have proper pagination
-		actions, _, _ := p.client.Droplets.Actions(droplet.ID, &godo.ListOptions{
+		actions, _, _ := p.client.Droplets.Actions(p.ctx, droplet.ID, &godo.ListOptions{
 			Page:    1,
 			PerPage: 500,
 		})
