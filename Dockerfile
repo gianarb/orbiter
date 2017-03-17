@@ -1,5 +1,5 @@
-FROM debian:sid
+FROM scratch
 
-ADD ./bin/orbiter /opt/orbiter
+ADD ./bin/orbiter /bin/orbiter
 
-CMD ["/opt/orbiter", "daemon", "-config", "/etc/orbiter.yml"]
+CMD ["orbiter", "daemon"]
