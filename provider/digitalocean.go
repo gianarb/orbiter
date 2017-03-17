@@ -56,10 +56,12 @@ func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool
 					},
 				}
 				droplet, _, err := p.client.Droplets.Create(p.ctx, createRequest)
-				responseChannel <- response{
-					err:       err,
-					droplet:   droplet,
-					direction: true,
+				if err == nil {
+					responseChannel <- response{
+						err:       err,
+						droplet:   droplet,
+						direction: true,
+					}
 				}
 			}()
 		}
@@ -94,24 +96,6 @@ func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool
 				ii++
 			}
 		}
-
-		//go func() {
-		//for iii := 0; iii < target; iii++ {
-		//select {
-		//case err := <-errorChannel:
-		//logrus.WithFields(logrus.Fields{
-		//"error":    err.Error(),
-		//"provider": "digitalocean",
-		//}).Warnf("We was not able to delete the droplet.")
-		//case droplet := <-dropletChannel:
-		//logrus.WithFields(logrus.Fields{
-		//"provider":    "digitalocean",
-		//"dropletName": droplet.ID,
-		//}).Debugf()
-		//}
-		//}
-		//wg.Wait()
-		//}()
 	}
 	go func() {
 		var message string
