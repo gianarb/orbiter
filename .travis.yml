@@ -1,8 +1,16 @@
 language: go
-
 go:
-  - 1.8.x
   - tip
-
+services:
+  - docker
 script:
-  - sudo PATH=$PATH GOPATH=$GOPATH make ci binaries
+  #- sudo PATH=$PATH GOPATH=$GOPATH make ci binaries
+  - make ci binaries
+after_success:
+  - docker login -u $DOCKER_USER -p $DOCKER_PASS
+  - export REPO=gianarb/orbiter
+  - if [ "$TRAVIS_BRANCH" == "master" ] && [ TRAVIS_PULL_REQUEST_BRANCH == "" ]; then docker build -f Dockerfile -t $REPO . && docker push $REPO; else echo "I only push from master branch." ; fi
+env:
+  global:
+    - secure: "MN7hNDnx47U9ZCg78GjEGDH5//lLfVzCKnJyPdT4jpYWM05pDB1rPrNwIPZOVuz4XT/x07Oa5M695Pkt61L+yVVfs+AUN6bYwffKWRU0T1dvXzJneB64JQeIGkqyiAHAmrjlpgzOgfB7EcmH4aEFq1HXYCqrvIgAX75D9l/T3xuRXdIzyVLzD3CZZQSZK5cFT37niofMvHoJgmBg5u8FEd2yR2M2LJGbIpXuB3UOn2yqRZHELVg12zhOwgqE+sQtqzBwirx9GObo5x4Nh7AWHIEN/K4BsxMXwZcWSySb0QxRtPpeyiItdDNr62W2MHpyEy//0sJwC5FFhsBzGfSlLpTV+YPrmaXju81JddQVyaB7l6gR3qnwrEywlLBSU3K71FJTHerq23KQV5p50JKA0oYAkKzDtaj0yJAXpFXZbXQq1cOVQidz7Suhi5ZsobI1bzWb5gELCeqCXr0aweTQXqch7Uom4qhIf6aK961F5dvUubzYcgKqbGRBp2F72rls2+9AvnQwUHnPC574sv88oTj0JrDDZoku4vBqSgNkOOICtekBNnksAZLbWasom/+ksqGyZX8qlbf1LLfhwVLqdFgWXrHggO8r8rh8i9MyON0K04hnTHsPHU8+kmbtzZwbXwnVmrJlWnlpolt5CT5XbaPpPwDxvoYsKx0WoYsmZ20="
+    - secure: "FmsLv4FV8hDSOWLGMJNBZqzN4ZQHAR/3i8MUjeaU9ux9QNGBhnPnH1/wEIQ4ticVUagNpUtjcYewyOif2YNg/aVabuB+K+X9T3ULgawmehK7e4oSr8NuiqObtFlw5RQVl0M+UV/cZiR5N3SOMmCAr8v+FReL6eMZv0iqPtmmGTcnNd7zi+/QTQB7wr4Tn0v67Q7UYN+/27DDJWqRpU2JbwxiEfIa70YF7Ba+PQ9/W2Uzf3cWXP1YFTZXrFw8waDS6NnlHz91g5haI6bJPdwdGM1DXhSWr+eE75OiV4VAChrqxQIRwiupilt8xVa1zMX9qbOC6FZtl4/WWG2Q43hgTGvUyUjxy5roBy6MyKaJY4o1q/Vs6RuBoNuUPwptvMG9Dbrus1fetuV9RMHJR04TNvHOdtrfnWj93dBUThQR4/eu+yyvBJRwqw00nm2V+AK7JhPWPQ9Yt6rpJghCEZlgOl823wUhBYGRt3VShxQdPPlbpjzRbTC58M0mqGgiqoo5bpUKsXHNVAUjlpEUnnSCNnED2kWIhQ/hsKwpKQVKkz+a6NztQ61toZHLllvEXr14sGMz8btB+lU7v7uv7DvH4GEzmfIPkK0A4hDLuLBEAieZLumkJocgdLSdW2MQMC1Cb5zfo1/cm7dt1V5J181sVkWjJqwqsiJ0fILo3wtJtlc="
