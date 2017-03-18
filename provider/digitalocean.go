@@ -34,6 +34,10 @@ func NewDigitalOceanProvider(c map[string]string) (autoscaler.Provider, error) {
 	return p, nil
 }
 
+func (p DigitalOceanProvider) Name() string {
+	return "digitalocean"
+}
+
 func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool) error {
 	var wg sync.WaitGroup
 	responseChannel := make(chan response, target)
