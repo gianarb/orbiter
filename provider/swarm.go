@@ -33,6 +33,10 @@ func NewSwarmProvider(c map[string]string) (autoscaler.Provider, error) {
 
 }
 
+func (p SwarmProvider) Name() string {
+	return "swarm"
+}
+
 func (p SwarmProvider) Scale(serviceId string, target int, direction bool) error {
 	ctx := context.Background()
 	service, _, err := p.dockerClient.ServiceInspectWithRaw(ctx, serviceId)

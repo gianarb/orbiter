@@ -20,6 +20,12 @@ func main() {
 		"daemon": func() (cli.Command, error) {
 			return &cmd.DaemonCmd{eventChannel}, nil
 		},
+		"autoscaler ls": func() (cli.Command, error) {
+			return &cmd.AutoscalerListCmd{}, nil
+		},
+		"system events": func() (cli.Command, error) {
+			return &cmd.SystemEventsCmd{}, nil
+		},
 	}
 
 	exitStatus, _ := c.Run()

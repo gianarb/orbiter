@@ -4,6 +4,7 @@ import "github.com/Sirupsen/logrus"
 
 type Provider interface {
 	Scale(string, int, bool) error
+	Name() string
 }
 
 type Autoscalers map[string]Autoscaler
