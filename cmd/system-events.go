@@ -29,7 +29,6 @@ func (c *SystemEventsCmd) Run(args []string) int {
 		}
 		fmt.Printf("%s", line)
 	}
-	return 0
 }
 
 func (c *SystemEventsCmd) Help() string {

@@ -18,7 +18,9 @@ func main() {
 
 	c.Commands = map[string]cli.CommandFactory{
 		"daemon": func() (cli.Command, error) {
-			return &cmd.DaemonCmd{eventChannel}, nil
+			return &cmd.DaemonCmd{
+				EventChannel: eventChannel,
+			}, nil
 		},
 		"autoscaler ls": func() (cli.Command, error) {
 			return &cmd.AutoscalerListCmd{}, nil
