@@ -11,7 +11,8 @@ We designed in collaboration with InfluxData to show how metrics can be used.
 
 It is based on plugins called `provider`. At the moment we implemented:
 
-* Docker Swarm mode
+* Docker Swarm mode [(go to zero-conf
+  chapter](https://github.com/gianarb/orbiter#autodetect)
 * DigitalOcean
 
 ```sh
@@ -78,6 +79,34 @@ scale it can call the outscaler to persist the right action
 curl -v -d '{"direction": true}' \
     http://localhost:8000/handle/infra_scale/docker
 ```
+
+## Autodetect
+The autodetect mode starts when you don't specify any configuration file.
+If you start oribter with the command:
+
+```
+orbiter daemon -daemon
+```
+
+It's going to start in autodetect mode. This modality at the moment only fetch
+for Docker SwarmMode. It use the environment variables DOCKER_HOST and so on to
+locate a Docker daemon. If it's in SwarmMode orbiter is going to look at all the
+services currently running.
+
+If a service is labeled with `orbiter=true` it's going to auto-register the
+service and it's going to enable autoscaling.
+
+Let's say that you started a service:
+
+```
+docker service create --label orbiter=true --name web -p 80:80 nginx
+```
+When you start orbiter, it's going to auto-register an autoscaler called
+`autodetect_swarm/web`. By default up and down are set to 1 but you can override
+them with the label `orbiter.up=3` and `orbiter.down=2`.
+
+This calability allow you to istantiate orbiter in an extremely easy way in
+Docker Swarm.
 
 ## Embeddable
 This project is trying to provide also an easy API to maintain a lot complexy
