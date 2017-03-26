@@ -12,5 +12,6 @@ func GetRouter(core core.Core, eventChannel chan *logrus.Entry) *mux.Router {
 	r.HandleFunc("/autoscaler", AutoscalerList(core.Autoscalers)).Methods("GET")
 	r.HandleFunc("/health", Health()).Methods("GET")
 	r.HandleFunc("/events", Events(eventChannel)).Methods("GET")
+	r.NotFoundHandler = NotFound{}
 	return r
 }
