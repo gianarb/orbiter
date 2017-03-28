@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/gianarb/orbiter/autoscaler"
@@ -21,6 +22,11 @@ type scaleRequest struct {
 func Handle(scalers autoscaler.Autoscalers) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
+		requestDump, err := httputil.DumpRequest(r, true)
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Println(string(requestDump))
 		w.Header().Set("Content-Type", "application/json")
 		decoder := json.NewDecoder(r.Body)
 		var scaleRequest scaleRequest
@@ -35,6 +41,16 @@ func Handle(scalers autoscaler.Autoscalers) func(w http.ResponseWriter, r *http.
 			w.WriteHeader(406)
 			return
 		}
+
+		directionByRoute, ok := vars["direction"]
+		if ok {
+			if directionByRoute == "up" {
+				scaleRequest.Direction = DIRECTION_UP
+			} else {
+				scaleRequest.Direction = DIRECTION_DOWN
+			}
+		}
+
 		serviceName, ok := vars["service_name"]
 		if !ok {
 			logrus.WithFields(logrus.Fields{

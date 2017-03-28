@@ -79,6 +79,12 @@ scale it can call the outscaler to persist the right action
 curl -v -d '{"direction": true}' \
     http://localhost:8000/handle/infra_scale/docker
 ```
+Or if you prefer
+
+```sh
+curl -v -X POST http://localhost:8000/handle/infra_scale/docker/up
+```
+
 
 ## Autodetect
 The autodetect mode starts when you don't specify any configuration file.
