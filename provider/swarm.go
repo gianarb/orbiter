@@ -24,7 +24,7 @@ func NewSwarmProvider(c map[string]string) (autoscaler.Provider, error) {
 		logrus.WithField("error", err).Warn("problem to communicate with docker")
 		return p, err
 	} else {
-		logrus.Info("Successfully connected to a Docker daemon")
+		logrus.Debug("Successfully connected to a Docker daemon")
 	}
 	p = SwarmProvider{
 		dockerClient: client,

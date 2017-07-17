@@ -65,7 +65,7 @@ func getAutoscalerByService(p autoscaler.Provider, an swarm.Annotations) (autosc
 	up := convertStringLabelToInt("orbiter.up", an.Labels)
 	down := convertStringLabelToInt("orbiter.down", an.Labels)
 	as := autoscaler.NewAutoscaler(p, an.Name, up, down)
-	logrus.Debugf("Registering  /handle/autoswarm/%s  to orbiter. (UP %d, DOWN %d)", an.Name, up, down)
+	logrus.Infof("Registering  /handle/autoswarm/%s  to orbiter. (UP %d, DOWN %d)", an.Name, up, down)
 	return as, nil
 }
 
