@@ -19,7 +19,7 @@ func NewCoreByConfig(c map[string]AutoscalerConf, core *Core) error {
 			return err
 		}
 		for serviceName, policy := range scaler.Policies {
-			scalers[fmt.Sprintf("%s/%s", scalerName, serviceName)] = autoscaler.NewAutoscaler(p, serviceName, policy.Up, policy.Down)
+			scalers[fmt.Sprintf("%s/%s", scalerName, serviceName)] = autoscaler.NewAutoscaler(p, serviceName, policy.Up, policy.Down, policy.CoolDown)
 		}
 	}
 	core.Autoscalers = scalers

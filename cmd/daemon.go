@@ -67,7 +67,33 @@ func (c *DaemonCmd) Run(args []string) int {
 		logrus.Info("Stopping and cleaning. Bye!")
 		os.Exit(0)
 	}()
+<<<<<<< HEAD
 	router := api.GetRouter(coreEngine, c.EventChannel)
+=======
+
+	// Background service check
+	go func() {
+		counter := 0
+		ctx := context.Background()
+		dockerClient, _ := client.NewEnvClient()
+		for {
+			<-timer1.C
+
+			services, _ := dockerClient.ServiceList(ctx, types.ServiceListOptions{})
+			if len(services) != counter {
+				logrus.Debugf("Service list changed %d -> %d", counter, len(services))
+				err = core.Autodetect(&coreEngine)
+				if err != nil {
+					logrus.WithField("error", err).Info(err)
+				}
+				counter = len(services)
+			}
+		}
+	}()
+
+	// Add routing
+	router := api.GetRouter(&coreEngine, c.EventChannel)
+>>>>>>> 5d8aa95... Cooldown period
 	logrus.Infof("API Server run on port %s", port)
 	http.ListenAndServe(port, router)
 	return 0
