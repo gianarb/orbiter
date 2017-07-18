@@ -57,10 +57,14 @@ func canScale(serviceId string, coolDown time.Duration) (retval bool, err error)
 			continue
 		}
 		// now < updatedAt + coolDown ??
-		if time.Now().Before(service.Meta.UpdatedAt.Add(coolDown)) {
+		m := time.Now()
+		logrus.Debugf("Deadline on  %s", service.Meta.UpdatedAt.Add(coolDown))
+		logrus.Debugf("Now is       %s", m)
+		if service.Meta.UpdatedAt.Add(coolDown).Before(m) == false {
 			err = errors.New(fmt.Sprintf("Cooldown period for %f seconds", service.Meta.UpdatedAt.Add(coolDown).Sub(time.Now()).Seconds()))
 			break
 		} else {
+			logrus.Debug("not before")
 			retval = true
 			break
 		}
