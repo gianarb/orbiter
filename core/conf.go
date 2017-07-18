@@ -5,10 +5,9 @@ import (
 )
 
 type PolicyConf struct {
-	// Number of tasks to start during a scale up
-	Up int `yaml:"up"`
-	// Number of tasks to start during a scale down
-	Down int `yaml:"down"`
+	Up       int `yaml:"up"`       // Number of tasks to start during a scale up
+	Down     int `yaml:"down"`     // Number of tasks to start during a scale down
+	CoolDown int `yaml:"cooldown"` // Number of milliseconds to sleep avoidin too quick scale
 }
 
 type AutoscalerConf struct {

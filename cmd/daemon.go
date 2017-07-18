@@ -99,7 +99,7 @@ func (c *DaemonCmd) Run(args []string) int {
 	}()
 
 	// Add routing
-	router := api.GetRouter(coreEngine, c.EventChannel)
+	router := api.GetRouter(&coreEngine, c.EventChannel)
 	logrus.Infof("API Server run on port %s", port)
 	http.ListenAndServe(port, router)
 	return 0
