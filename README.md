@@ -80,14 +80,25 @@ scale it can call the outscaler to persist the right action
 
 ```sh
 curl -v -d '{"direction": true}' \
-    http://localhost:8000/handle/infra_scale/docker
+    http://localhost:8000/v1/orbiter/handle/infra_scale/docker
 ```
 Or if you prefer
 
 ```sh
-curl -v -X POST http://localhost:8000/handle/infra_scale/docker/up
+curl -v -X POST http://localhost:8000/v1/orbiter/handle/infra_scale/docker/up
 ```
 
+You can look at the list of services managed by orbiter:
+
+```sh
+curl -v -X GET http://localhost:8000/v1/orbiter/autoscaler
+```
+
+Look at the health to know if everything is working:
+
+```sh
+curl -v -X GET http://localhost:8000/v1/orbiter/halth
+```
 
 ## Autodetect
 The autodetect mode starts when you don't specify any configuration file.
