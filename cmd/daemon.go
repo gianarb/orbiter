@@ -109,8 +109,8 @@ func (c *DaemonCmd) Help() string {
 	helpText := `
 Usage: start gourmet API handler.
 	Options:
-	-debug_level=info				Servert port
-	-port=:8000				Servert port
+	-debug				Debug flag
+	-port=:8000				Server port
 	-config=/etc/daemon.yml	Configuration path
 																											`
 	return strings.TrimSpace(helpText)

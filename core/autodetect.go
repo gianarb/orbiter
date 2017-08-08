@@ -20,7 +20,8 @@ import (
 func Autodetect(core *Core) error {
 	autoDetectSwarmMode(core)
 	if len(core.Autoscalers) == 0 {
-		return errors.New("we didn't detect any autoscaling group")
+		//return errors.New("we didn't detect any autoscaling group")
+		logrus.Info("no autoscaling group detected for now")
 	}
 	return nil
 }
