@@ -1,0 +1,50 @@
+version: '3'
+services:
+  orbiter:
+    image: gianarb/orbiter
+    command: daemon
+    ports:
+      - 8081:8000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+  micro:
+    image: gianarb/micro:1.2.0
+    labels: [orbiter=true]
+    networks:
+      - micro-net
+    ports:
+      - 8000:8000
+    deploy:
+      mode: replicated
+      replicas: 10
+      labels: [orbiter=true]
+      update_config:
+        parallelism: 2
+        delay: 3s
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+        restart_policy:
+          condition: on-failure
+          delay: 3s
+          max_attempts: 3
+          window: 5s
+networks:
+  micro-net:

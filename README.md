@@ -12,8 +12,11 @@ We designed in collaboration with InfluxData to show how metrics can be used.
 It is based on plugins called `provider`. At the moment we implemented:
 
 * Docker Swarm mode [(go to zero-conf
-  chapter](https://github.com/gianarb/orbiter#autodetect)
+  chapter](https://github.com/gianarb/orbiter#autodetect). look full example
+  under `./contrib/swarm` directory
 * DigitalOcean
+
+
 
 ```sh
 orbiter daemon -config config.yml
