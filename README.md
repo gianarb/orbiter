@@ -111,7 +111,7 @@ Let's say that you started a service:
 docker service create --label orbiter=true --name web -p 80:80 nginx
 ```
 When you start orbiter, it's going to auto-register an autoscaler called
-`autodetect_swarm/web`. By default up and down are set to 1 but you can override
+`autoswarm/web`. By default up and down are set to 1 but you can override
 them with the label `orbiter.up=3` and `orbiter.down=2`.
 
 This calability allow you to istantiate orbiter in an extremely easy way in
