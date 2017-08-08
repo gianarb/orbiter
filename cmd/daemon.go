@@ -9,10 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"context"
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
 	"github.com/gianarb/orbiter/api"
 	"github.com/gianarb/orbiter/autoscaler"
 	"github.com/gianarb/orbiter/core"
+	"time"
 )
 
 type DaemonCmd struct {
@@ -54,20 +58,48 @@ func (c *DaemonCmd) Run(args []string) int {
 		}
 	} else {
 		logrus.Info("Starting in auto-detection mode.")
-		err = core.Autodetect(&coreEngine)
+		/* err = core.Autodetect(&coreEngine)
 		if err != nil {
 			logrus.WithField("error", err).Info(err)
 			os.Exit(0)
-		}
+		}*/
 	}
+
+	// Timer ticker
+	timer1 := time.NewTicker(1000 * time.Millisecond)
+
+	// Watchdog
 	go func() {
 		sigchan := make(chan os.Signal, 10)
 		signal.Notify(sigchan, os.Interrupt)
 		<-sigchan
+		timer1.Stop()
 		logrus.Info("Stopping and cleaning. Bye!")
 		os.Exit(0)
 	}()
-	router := api.GetRouter(coreEngine, c.EventChannel)
+
+	// Background service check
+	go func() {
+		counter := 0
+		ctx := context.Background()
+		dockerClient, _ := client.NewEnvClient()
+		for {
+			<-timer1.C
+
+			services, _ := dockerClient.ServiceList(ctx, types.ServiceListOptions{})
+			if len(services) != counter {
+				logrus.Debugf("Service list changed %d -> %d", counter, len(services))
+				err = core.Autodetect(&coreEngine)
+				if err != nil {
+					logrus.WithField("error", err).Info(err)
+				}
+				counter = len(services)
+			}
+		}
+	}()
+
+	// Add routing
+	router := api.GetRouter(&coreEngine, c.EventChannel)
 	logrus.Infof("API Server run on port %s", port)
 	http.ListenAndServe(port, router)
 	return 0
@@ -77,8 +109,8 @@ func (c *DaemonCmd) Help() string {
 	helpText := `
 Usage: start gourmet API handler.
 	Options:
-	-debug_level=info				Servert port
-	-port=:8000				Servert port
+	-debug				Debug flag
+	-port=:8000				Server port
 	-config=/etc/daemon.yml	Configuration path
 																											`
 	return strings.TrimSpace(helpText)

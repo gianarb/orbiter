@@ -20,7 +20,8 @@ import (
 func Autodetect(core *Core) error {
 	autoDetectSwarmMode(core)
 	if len(core.Autoscalers) == 0 {
-		return errors.New("we didn't detect any autoscaling group")
+		//return errors.New("we didn't detect any autoscaling group")
+		logrus.Info("no autoscaling group detected for now")
 	}
 	return nil
 }
@@ -52,7 +53,7 @@ func autoDetectSwarmMode(c *Core) {
 		if err != nil {
 			continue
 		}
-		c.Autoscalers[fmt.Sprintf("autodetect_swarm/%s", service.Spec.Annotations.Name)] = s
+		c.Autoscalers[fmt.Sprintf("autoswarm/%s", service.Spec.Annotations.Name)] = s
 	}
 }
 
@@ -63,8 +64,9 @@ func getAutoscalerByService(p autoscaler.Provider, an swarm.Annotations) (autosc
 	}
 	up := convertStringLabelToInt("orbiter.up", an.Labels)
 	down := convertStringLabelToInt("orbiter.down", an.Labels)
-	as := autoscaler.NewAutoscaler(p, an.Name, up, down)
-	logrus.Debugf("autodetect_swarm/%s added to orbiter. UP %d, DOWN %d", an.Name, up, down)
+	cool := convertStringLabelToInt("orbiter.cooldown", an.Labels)
+	as := autoscaler.NewAutoscaler(p, an.Name, up, down, cool)
+	logrus.Infof("Registering  /handle/autoswarm/%s  to orbiter. (UP %d, DOWN %d, COOL %d)", an.Name, up, down, cool)
 	return as, nil
 }
 

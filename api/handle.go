@@ -19,7 +19,7 @@ type scaleRequest struct {
 	Direction bool   `json:"direction"`
 }
 
-func Handle(scalers autoscaler.Autoscalers) func(w http.ResponseWriter, r *http.Request) {
+func Handle(scalers *autoscaler.Autoscalers) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		requestDump, err := httputil.DumpRequest(r, true)
@@ -61,7 +61,7 @@ func Handle(scalers autoscaler.Autoscalers) func(w http.ResponseWriter, r *http.
 			return
 		}
 
-		s, ok := scalers[fmt.Sprintf("%s/%s", autoscalerName, serviceName)]
+		s, ok := (*scalers)[fmt.Sprintf("%s/%s", autoscalerName, serviceName)]
 		if !ok {
 			logrus.WithFields(logrus.Fields{
 				"path": r.URL.RawPath,

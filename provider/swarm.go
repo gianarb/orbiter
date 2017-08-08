@@ -24,7 +24,7 @@ func NewSwarmProvider(c map[string]string) (autoscaler.Provider, error) {
 		logrus.WithField("error", err).Warn("problem to communicate with docker")
 		return p, err
 	} else {
-		logrus.Info("Successfully connected to a Docker daemon")
+		logrus.Debug("Successfully connected to a Docker daemon")
 	}
 	p = SwarmProvider{
 		dockerClient: client,
@@ -96,7 +96,7 @@ func (p SwarmProvider) Scale(serviceId string, target int, direction bool) error
 
 // This function validate if a request is acceptable or not.
 func (p *SwarmProvider) isAcceptable(tasks []swarm.Task, target int, direction bool) error {
-	if p.calculateActiveTasks(tasks) < target && direction == false {
+	if p.calculateActiveTasks(tasks) < target || p.calculateActiveTasks(tasks) < 2 && direction == false {
 		return errors.New(fmt.Sprintf("I can not scale down because it has only %d running.", target))
 	}
 	return nil
