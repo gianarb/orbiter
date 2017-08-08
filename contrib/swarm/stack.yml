@@ -29,7 +29,7 @@ services:
       - 8000:8000
     deploy:
       mode: replicated
-      replicas: 10
+      replicas: 3
       labels: [orbiter=true]
       update_config:
         parallelism: 2

@@ -5,7 +5,6 @@ echo "### Init Servers ###"
 docker-machine create -d ${provider} sw1 &
 docker-machine create -d ${provider} sw2 &
 docker-machine create -d ${provider} sw3 &
-docker-machine create -d ${provider} sw4 &
 
 wait
 

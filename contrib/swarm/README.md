@@ -6,7 +6,7 @@ Requirements:
 * Docker Machine
 * Virtualbox
 
-1. Create a swarm cluster with 4 nodes. One manager and three workers. It uses
+1. Create a swarm cluster with 3 nodes. One manager and two workers. It uses
    Docker Machine and Virtualbox as provider.
 ```
 make init
@@ -27,7 +27,7 @@ make deploy
 
 4. This command shows the current situation. The first table represent the
    number of services and how many task are running under a service. You should
-   see two services. Micro has 10 tasks.
+   see two services. Micro has 3 tasks.
 
 ```
 make ps
@@ -47,7 +47,7 @@ make scale-down
 make ps
 ```
 
-7. At the end of the test you can clean your envrionment
+7. At the end of the test you can clean your environment
 
 ```
 make destroy

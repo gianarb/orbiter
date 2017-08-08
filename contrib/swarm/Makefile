@@ -2,7 +2,7 @@ IP = $(shell docker-machine ip sw1)
 init:
 	./cluster/create.sh
 destroy:
-	docker-machine rm -f sw1 sw2 sw3 sw4
+	docker-machine rm -f sw1 sw2 sw3
 deploy:
 	docker stack deploy --compose-file stack.yml stack
 ps:
@@ -12,4 +12,3 @@ scale-up:
 	curl -X POST -v http://$(IP):8081/handle/autodetect_swarm/stack_micro/up
 scale-down:
 	curl -X POST -v http://$(IP):8081/handle/autodetect_swarm/stack_micro/down
-
