@@ -1,5 +1,5 @@
 {
-    "memo": "4aea875d25b0b1b6cbcf98ad35f24d7c1f5db6fbd93f7d506e280b379a51b71e",
+    "memo": "bed23d2ca43ec0d3afa08b89fcfd9658bf509c323426c375f3b30719076591ca",
     "projects": [
         {
             "name": "github.com/Microsoft/go-winio",
@@ -23,6 +23,17 @@
             "revision": "4239b77079c7b5d1243b7b4736304ce8ddb6f0f2",
             "packages": [
                 "."
+            ]
+        },
+        {
+            "name": "github.com/aws/aws-sdk-go",
+            "version": "v1.7.6",
+            "revision": "0e9d407f5635155ef9d4f1fd5c078e9aa236c177",
+            "packages": [
+                "aws",
+                "aws/credentials",
+                "aws/session",
+                "service/ec2"
             ]
         },
         {
@@ -79,6 +90,14 @@
             ]
         },
         {
+            "name": "github.com/go-ini/ini",
+            "version": "v1.25.2",
+            "revision": "74bdc99692c3408cb103221e38675ce8fda0a718",
+            "packages": [
+                "."
+            ]
+        },
+        {
             "name": "github.com/go-yaml/yaml",
             "branch": "v2",
             "revision": "a3f3340b5840cee44f372bddb5880fcbc419b46a",
@@ -114,6 +133,14 @@
             "name": "github.com/gorilla/mux",
             "branch": "master",
             "revision": "94e7d24fd285520f3d12ae998f7fdd6b5393d453",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/jmespath/go-jmespath",
+            "version": "0.2.2",
+            "revision": "3433f3ea46d9f8019119e7dd41274e112a2359a9",
             "packages": [
                 "."
             ]

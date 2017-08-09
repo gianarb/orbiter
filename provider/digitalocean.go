@@ -80,7 +80,7 @@ func (p DigitalOceanProvider) Scale(serviceId string, target int, direction bool
 			logrus.WithFields(logrus.Fields{
 				"provider": "digitalocean",
 				"error":    err,
-			}).Warnf("Impossibile to get the list of droplets.")
+			}).Warn("Impossibile to get the list of droplets.")
 			return err
 		}
 
