@@ -105,7 +105,7 @@ The autodetect mode starts when you don't specify any configuration file.
 If you start oribter with the command:
 
 ```
-orbiter daemon -daemon
+orbiter daemon
 ```
 
 It's going to start in autodetect mode. This modality at the moment only fetch
@@ -159,7 +159,7 @@ func CreateAutoScaler() *autoscaler.Autoscaler{
 ## With docker
 
 ```sh
-docker run -it -v ${PWD}/your.yml:/etc/orbiter.yml -p 8000:8000 gianarb/orbiter
+docker run -it -v ${PWD}/your.yml:/etc/orbiter.yml -p 8000:8000 gianarb/orbiter daemon
 ```
 We are supporting an imag `gianarb/orbiter` in hub.docker.com. You can run it
 with your configuration.
