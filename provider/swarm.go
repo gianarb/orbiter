@@ -66,7 +66,7 @@ func (p SwarmProvider) Scale(serviceId string, target int, direction bool) error
 		logrus.WithFields(logrus.Fields{
 			"error":    err.Error(),
 			"provider": "swarm",
-		}).Info("Service %s is not scaling.", serviceId)
+		}).Infof("Service %s is not scaling.", serviceId)
 		return err
 	}
 
@@ -96,7 +96,7 @@ func (p SwarmProvider) Scale(serviceId string, target int, direction bool) error
 
 // This function validate if a request is acceptable or not.
 func (p *SwarmProvider) isAcceptable(tasks []swarm.Task, target int, direction bool) error {
-	if p.calculateActiveTasks(tasks) < target || p.calculateActiveTasks(tasks) < 2 && direction == false {
+	if direction == false && (p.calculateActiveTasks(tasks) < target || p.calculateActiveTasks(tasks) < 2) {
 		return errors.New(fmt.Sprintf("I can not scale down because it has only %d running.", target))
 	}
 	return nil
