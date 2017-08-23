@@ -6,6 +6,7 @@ docker-build - Build an image from a Dockerfile
 
 # SYNOPSIS
 **docker build**
+[**--add-host**[=*[]*]]
 [**--build-arg**[=*[]*]]
 [**--cpu-shares**[=*0*]]
 [**--cgroup-parent**[=*CGROUP-PARENT*]]
@@ -62,7 +63,7 @@ set as the **URL**, the repository is cloned locally and then sent as the contex
    **Experimental Only**
    Once the image is built, squash the new layers into a new image with a single
    new layer. Squashing does not destroy any existing image, rather it creates a new
-   image with the content of the squshed layers. This effectively makes it look
+   image with the content of the squashed layers. This effectively makes it look
    like all `Dockerfile` commands were created with a single layer. The build
    cache is preserved with this method.
 
@@ -73,6 +74,12 @@ set as the **URL**, the repository is cloned locally and then sent as the contex
    **Note**: using this option you may see significantly more space used due to
    storing two copies of the image, one for the build cache with all the cache
    layers in tact, and one for the squashed version.
+
+**--add-host**=[]
+   Add a custom host-to-IP mapping (host:ip)
+
+   Add a line to /etc/hosts. The format is hostname:ip.  The **--add-host**
+option can be set multiple times.
 
 **--build-arg**=*variable*
    name and value of a **buildarg**.

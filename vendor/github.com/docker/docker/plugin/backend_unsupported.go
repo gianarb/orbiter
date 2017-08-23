@@ -7,8 +7,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/reference"
+	"github.com/docker/docker/api/types/filters"
 	"golang.org/x/net/context"
 )
 
@@ -45,7 +46,7 @@ func (pm *Manager) Upgrade(ctx context.Context, ref reference.Named, name string
 }
 
 // List displays the list of plugins and associated metadata.
-func (pm *Manager) List() ([]types.Plugin, error) {
+func (pm *Manager) List(pluginFilters filters.Args) ([]types.Plugin, error) {
 	return nil, errNotSupported
 }
 

@@ -4,25 +4,27 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/swarm"
+	"github.com/docker/docker/api/types/versions"
 	servicecli "github.com/docker/docker/cli/command/service"
 	composetypes "github.com/docker/docker/cli/compose/types"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/opts"
 	runconfigopts "github.com/docker/docker/runconfig/opts"
-	"github.com/docker/go-connections/nat"
+	"github.com/pkg/errors"
 )
 
+const defaultNetwork = "default"
+
 // Services from compose-file types to engine API types
-// TODO: fix secrets API so that SecretAPIClient is not required here
 func Services(
 	namespace Namespace,
 	config *composetypes.Config,
-	client client.SecretAPIClient,
+	client client.CommonAPIClient,
 ) (map[string]swarm.ServiceSpec, error) {
 	result := make(map[string]swarm.ServiceSpec)
 
@@ -31,14 +33,13 @@ func Services(
 	networks := config.Networks
 
 	for _, service := range services {
-
 		secrets, err := convertServiceSecrets(client, namespace, service.Secrets, config.Secrets)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "service %s", service.Name)
 		}
-		serviceSpec, err := convertService(namespace, service, networks, volumes, secrets)
+		serviceSpec, err := convertService(client.ClientVersion(), namespace, service, networks, volumes, secrets)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "service %s", service.Name)
 		}
 		result[service.Name] = serviceSpec
 	}
@@ -47,6 +48,7 @@ func Services(
 }
 
 func convertService(
+	apiVersion string,
 	namespace Namespace,
 	service composetypes.ServiceConfig,
 	networkConfigs map[string]composetypes.NetworkConfig,
@@ -55,7 +57,7 @@ func convertService(
 ) (swarm.ServiceSpec, error) {
 	name := namespace.Scope(service.Name)
 
-	endpoint, err := convertEndpointSpec(service.Ports)
+	endpoint, err := convertEndpointSpec(service.Deploy.EndpointMode, service.Ports)
 	if err != nil {
 		return swarm.ServiceSpec{}, err
 	}
@@ -67,7 +69,6 @@ func convertService(
 
 	mounts, err := Volumes(service.Volumes, volumes, namespace)
 	if err != nil {
-		// TODO: better error message (include service name)
 		return swarm.ServiceSpec{}, err
 	}
 
@@ -132,10 +133,21 @@ func convertService(
 		},
 		EndpointSpec: endpoint,
 		Mode:         mode,
-		Networks:     networks,
 		UpdateConfig: convertUpdateConfig(service.Deploy.UpdateConfig),
 	}
 
+	// ServiceSpec.Networks is deprecated and should not have been used by
+	// this package. It is possible to update TaskTemplate.Networks, but it
+	// is not possible to update ServiceSpec.Networks. Unfortunately, we
+	// can't unconditionally start using TaskTemplate.Networks, because that
+	// will break with older daemons that don't support migrating from
+	// ServiceSpec.Networks to TaskTemplate.Networks. So which field to use
+	// is conditional on daemon version.
+	if versions.LessThan(apiVersion, "1.29") {
+		serviceSpec.Networks = networks
+	} else {
+		serviceSpec.TaskTemplate.Networks = networks
+	}
 	return serviceSpec, nil
 }
 
@@ -157,20 +169,16 @@ func convertServiceNetworks(
 	name string,
 ) ([]swarm.NetworkAttachmentConfig, error) {
 	if len(networks) == 0 {
-		return []swarm.NetworkAttachmentConfig{
-			{
-				Target:  namespace.Scope("default"),
-				Aliases: []string{name},
-			},
-		}, nil
+		networks = map[string]*composetypes.ServiceNetworkConfig{
+			defaultNetwork: {},
+		}
 	}
 
 	nets := []swarm.NetworkAttachmentConfig{}
 	for networkName, network := range networks {
 		networkConfig, ok := networkConfigs[networkName]
-		if !ok {
-			return []swarm.NetworkAttachmentConfig{}, fmt.Errorf(
-				"service %q references network %q, which is not declared", name, networkName)
+		if !ok && networkName != defaultNetwork {
+			return nil, errors.Errorf("undefined network %q", networkName)
 		}
 		var aliases []string
 		if network != nil {
@@ -187,7 +195,6 @@ func convertServiceNetworks(
 	}
 
 	sort.Sort(byNetworkTarget(nets))
-
 	return nets, nil
 }
 
@@ -198,15 +205,19 @@ func convertServiceSecrets(
 	secrets []composetypes.ServiceSecretConfig,
 	secretSpecs map[string]composetypes.SecretConfig,
 ) ([]*swarm.SecretReference, error) {
-	opts := []*types.SecretRequestOption{}
+	refs := []*swarm.SecretReference{}
 	for _, secret := range secrets {
 		target := secret.Target
 		if target == "" {
 			target = secret.Source
 		}
 
+		secretSpec, exists := secretSpecs[secret.Source]
+		if !exists {
+			return nil, errors.Errorf("undefined secret %q", secret.Source)
+		}
+
 		source := namespace.Scope(secret.Source)
-		secretSpec := secretSpecs[secret.Source]
 		if secretSpec.External.External {
 			source = secretSpec.External.Name
 		}
@@ -219,17 +230,27 @@ func convertServiceSecrets(
 		if gid == "" {
 			gid = "0"
 		}
+		mode := secret.Mode
+		if mode == nil {
+			mode = uint32Ptr(0444)
+		}
 
-		opts = append(opts, &types.SecretRequestOption{
-			Source: source,
-			Target: target,
-			UID:    uid,
-			GID:    gid,
-			Mode:   os.FileMode(secret.Mode),
+		refs = append(refs, &swarm.SecretReference{
+			File: &swarm.SecretReferenceFileTarget{
+				Name: target,
+				UID:  uid,
+				GID:  gid,
+				Mode: os.FileMode(*mode),
+			},
+			SecretName: source,
 		})
 	}
 
-	return servicecli.ParseSecrets(client, opts)
+	return servicecli.ParseSecrets(client, refs)
+}
+
+func uint32Ptr(value uint32) *uint32 {
+	return &value
 }
 
 func convertExtraHosts(extraHosts map[string]string) []string {
@@ -245,13 +266,13 @@ func convertHealthcheck(healthcheck *composetypes.HealthCheckConfig) (*container
 		return nil, nil
 	}
 	var (
-		err               error
-		timeout, interval time.Duration
-		retries           int
+		err                            error
+		timeout, interval, startPeriod time.Duration
+		retries                        int
 	)
 	if healthcheck.Disable {
 		if len(healthcheck.Test) != 0 {
-			return nil, fmt.Errorf("test and disable can't be set at the same time")
+			return nil, errors.Errorf("test and disable can't be set at the same time")
 		}
 		return &container.HealthConfig{
 			Test: []string{"NONE"},
@@ -270,14 +291,21 @@ func convertHealthcheck(healthcheck *composetypes.HealthCheckConfig) (*container
 			return nil, err
 		}
 	}
+	if healthcheck.StartPeriod != "" {
+		startPeriod, err = time.ParseDuration(healthcheck.StartPeriod)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if healthcheck.Retries != nil {
 		retries = int(*healthcheck.Retries)
 	}
 	return &container.HealthConfig{
-		Test:     healthcheck.Test,
-		Timeout:  timeout,
-		Interval: interval,
-		Retries:  retries,
+		Test:        healthcheck.Test,
+		Timeout:     timeout,
+		Interval:    interval,
+		Retries:     retries,
+		StartPeriod: startPeriod,
 	}, nil
 }
 
@@ -302,7 +330,7 @@ func convertRestartPolicy(restart string, source *composetypes.RestartPolicy) (*
 				MaxAttempts: &attempts,
 			}, nil
 		default:
-			return nil, fmt.Errorf("unknown restart policy: %s", restart)
+			return nil, errors.Errorf("unknown restart policy: %s", restart)
 		}
 	}
 	return &swarm.RestartPolicy{
@@ -360,7 +388,6 @@ func convertResources(source composetypes.Resources) (*swarm.ResourceRequirement
 		}
 	}
 	return resources, nil
-
 }
 
 type byPublishedPort []swarm.PortConfig
@@ -369,30 +396,35 @@ func (a byPublishedPort) Len() int           { return len(a) }
 func (a byPublishedPort) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a byPublishedPort) Less(i, j int) bool { return a[i].PublishedPort < a[j].PublishedPort }
 
-func convertEndpointSpec(source []string) (*swarm.EndpointSpec, error) {
+func convertEndpointSpec(endpointMode string, source []composetypes.ServicePortConfig) (*swarm.EndpointSpec, error) {
 	portConfigs := []swarm.PortConfig{}
-	ports, portBindings, err := nat.ParsePortSpecs(source)
-	if err != nil {
-		return nil, err
+	for _, port := range source {
+		portConfig := swarm.PortConfig{
+			Protocol:      swarm.PortConfigProtocol(port.Protocol),
+			TargetPort:    port.Target,
+			PublishedPort: port.Published,
+			PublishMode:   swarm.PortConfigPublishMode(port.Mode),
+		}
+		portConfigs = append(portConfigs, portConfig)
 	}
 
-	for port := range ports {
-		portConfigs = append(
-			portConfigs,
-			opts.ConvertPortToPortConfig(port, portBindings)...)
-	}
-
-	// Sorting to make sure these are always in the same order
 	sort.Sort(byPublishedPort(portConfigs))
-
-	return &swarm.EndpointSpec{Ports: portConfigs}, nil
+	return &swarm.EndpointSpec{
+		Mode:  swarm.ResolutionMode(strings.ToLower(endpointMode)),
+		Ports: portConfigs,
+	}, nil
 }
 
-func convertEnvironment(source map[string]string) []string {
+func convertEnvironment(source map[string]*string) []string {
 	var output []string
 
 	for name, value := range source {
-		output = append(output, fmt.Sprintf("%s=%s", name, value))
+		switch value {
+		case nil:
+			output = append(output, name)
+		default:
+			output = append(output, fmt.Sprintf("%s=%s", name, *value))
+		}
 	}
 
 	return output
@@ -404,13 +436,13 @@ func convertDeployMode(mode string, replicas *uint64) (swarm.ServiceMode, error)
 	switch mode {
 	case "global":
 		if replicas != nil {
-			return serviceMode, fmt.Errorf("replicas can only be used with replicated mode")
+			return serviceMode, errors.Errorf("replicas can only be used with replicated mode")
 		}
 		serviceMode.Global = &swarm.GlobalService{}
 	case "replicated", "":
 		serviceMode.Replicated = &swarm.ReplicatedService{Replicas: replicas}
 	default:
-		return serviceMode, fmt.Errorf("Unknown mode: %s", mode)
+		return serviceMode, errors.Errorf("Unknown mode: %s", mode)
 	}
 	return serviceMode, nil
 }

@@ -51,9 +51,15 @@ Config provides the base accessible fields for working with V0 plugin format
 
       currently supported:
 
-      	- **docker.volumedriver/1.0**
+        - **docker.volumedriver/1.0**
 
-      	- **docker.authz/1.0**
+        - **docker.networkdriver/1.0**
+
+        - **docker.ipamdriver/1.0**
+
+        - **docker.authz/1.0**
+
+        - **docker.logdriver/1.0**
 
     - **`socket`** *string*
 
@@ -110,6 +116,11 @@ Config provides the base accessible fields for working with V0 plugin format
     - **`options`** *string array*
 
 	  options of the mount.
+
+- **`ipchost`** *boolean*
+   Access to host ipc namespace.
+- **`pidhost`** *boolean*
+   Access to host pid namespace.
 
 - **`propagatedMount`** *string*
 

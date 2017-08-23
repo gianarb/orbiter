@@ -33,14 +33,14 @@ of steps.
 
 ```
 $ docker plugin install cpuguy83/docker-overlay2-graphdriver-plugin # this command also enables the driver
-<output supressed>
+<output suppressed>
 $ pkill dockerd
 $ dockerd --experimental -s cpuguy83/docker-overlay2-graphdriver-plugin
 ```
 
 # Write a graph driver plugin
 
-See the [plugin documentation](/docs/extend/index.md) for detailed information
+See the [plugin documentation](https://docs.docker.com/engine/extend/) for detailed information
 on the underlying plugin protocol.
 
 
@@ -82,6 +82,29 @@ The request also includes a list of UID and GID mappings, structed as follows:
 ```
 
 Respond with a non-empty string error if an error occurred.
+
+
+### /GraphDriver.Capabilities
+
+**Request**:
+```json
+{}
+```
+
+Get behavioral characteristics of the graph driver. If a plugin does not handle
+this request, the engine will use default values for all capabilities.
+
+**Response**:
+```json
+{
+  "ReproducesExactDiffs": false,
+}
+```
+
+Respond with values of capabilities:
+
+* **ReproducesExactDiffs** Defaults to false. Flags that this driver is capable
+of reproducing exactly equivalent diffs for read-only filesystem layers.
 
 
 ### /GraphDriver.Create
@@ -287,7 +310,9 @@ and `Parent`. `Parent` may be an empty string, in which case there is no parent.
 
 **Response**:
 ```
+{% raw %}
 {{ TAR STREAM }}
+{% endraw %}
 ```
 
 ### /GraphDriver.Changes
@@ -330,7 +355,9 @@ Respond with a non-empty string error if an error occurred.
 
 **Request**:
 ```
+{% raw %}
 {{ TAR STREAM }}
+{% endraw %}
 ```
 
 Extract the changeset from the given diff into the layer with the specified `ID`

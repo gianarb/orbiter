@@ -16,16 +16,13 @@ import (
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/system"
-	"github.com/docker/docker/utils"
 	"github.com/docker/docker/volume"
-	"github.com/opencontainers/runc/libcontainer/label"
+	"github.com/opencontainers/selinux/go-selinux/label"
 	"golang.org/x/sys/unix"
 )
 
 const (
-	// DefaultSHMSize is the default size (64MB) of the SHM which will be mounted in the container
-	DefaultSHMSize           int64 = 67108864
-	containerSecretMountPath       = "/run/secrets"
+	containerSecretMountPath = "/run/secrets"
 )
 
 // Container holds the fields specific to unixen implementations.
@@ -69,7 +66,7 @@ func (container *Container) CreateDaemonEnvironment(tty bool, linkedEnv []string
 	// because the env on the container can override certain default values
 	// we need to replace the 'env' keys where they match and append anything
 	// else.
-	env = utils.ReplaceOrAppendEnvValues(env, container.Config.Env)
+	env = ReplaceOrAppendEnvValues(env, container.Config.Env)
 	return env
 }
 
@@ -166,11 +163,6 @@ func (container *Container) NetworkMounts() []Mount {
 	return mounts
 }
 
-// SecretMountPath returns the path of the secret mount for the container
-func (container *Container) SecretMountPath() string {
-	return filepath.Join(container.Root, "secrets")
-}
-
 // CopyImagePathContent copies files in destination to the volume.
 func (container *Container) CopyImagePathContent(v volume.Volume, destination string) error {
 	rootfs, err := symlink.FollowSymlinkInScope(filepath.Join(container.BaseFS, destination), container.BaseFS)
@@ -256,17 +248,21 @@ func (container *Container) IpcMounts() []Mount {
 	return mounts
 }
 
-// SecretMount returns the mount for the secret path
-func (container *Container) SecretMount() *Mount {
-	if len(container.SecretReferences) > 0 {
-		return &Mount{
-			Source:      container.SecretMountPath(),
-			Destination: containerSecretMountPath,
-			Writable:    false,
+// SecretMounts returns the mounts for the secret path.
+func (container *Container) SecretMounts() []Mount {
+	var mounts []Mount
+	for _, r := range container.SecretReferences {
+		if r.File == nil {
+			continue
 		}
+		mounts = append(mounts, Mount{
+			Source:      container.SecretFilePath(*r),
+			Destination: getSecretTargetPath(r),
+			Writable:    false,
+		})
 	}
 
-	return nil
+	return mounts
 }
 
 // UnmountSecrets unmounts the local tmpfs for secrets
@@ -281,6 +277,23 @@ func (container *Container) UnmountSecrets() error {
 	return detachMounted(container.SecretMountPath())
 }
 
+// ConfigMounts returns the mounts for configs.
+func (container *Container) ConfigMounts() []Mount {
+	var mounts []Mount
+	for _, configRef := range container.ConfigReferences {
+		if configRef.File == nil {
+			continue
+		}
+		mounts = append(mounts, Mount{
+			Source:      container.ConfigFilePath(*configRef),
+			Destination: configRef.File.Name,
+			Writable:    false,
+		})
+	}
+
+	return mounts
+}
+
 // UpdateContainer updates configuration of a container.
 func (container *Container) UpdateContainer(hostConfig *containertypes.HostConfig) error {
 	container.Lock()
@@ -289,11 +302,32 @@ func (container *Container) UpdateContainer(hostConfig *containertypes.HostConfi
 	// update resources of container
 	resources := hostConfig.Resources
 	cResources := &container.HostConfig.Resources
+
+	// validate NanoCPUs, CPUPeriod, and CPUQuota
+	// Becuase NanoCPU effectively updates CPUPeriod/CPUQuota,
+	// once NanoCPU is already set, updating CPUPeriod/CPUQuota will be blocked, and vice versa.
+	// In the following we make sure the intended update (resources) does not conflict with the existing (cResource).
+	if resources.NanoCPUs > 0 && cResources.CPUPeriod > 0 {
+		return fmt.Errorf("Conflicting options: Nano CPUs cannot be updated as CPU Period has already been set")
+	}
+	if resources.NanoCPUs > 0 && cResources.CPUQuota > 0 {
+		return fmt.Errorf("Conflicting options: Nano CPUs cannot be updated as CPU Quota has already been set")
+	}
+	if resources.CPUPeriod > 0 && cResources.NanoCPUs > 0 {
+		return fmt.Errorf("Conflicting options: CPU Period cannot be updated as NanoCPUs has already been set")
+	}
+	if resources.CPUQuota > 0 && cResources.NanoCPUs > 0 {
+		return fmt.Errorf("Conflicting options: CPU Quota cannot be updated as NanoCPUs has already been set")
+	}
+
 	if resources.BlkioWeight != 0 {
 		cResources.BlkioWeight = resources.BlkioWeight
 	}
 	if resources.CPUShares != 0 {
 		cResources.CPUShares = resources.CPUShares
+	}
+	if resources.NanoCPUs != 0 {
+		cResources.NanoCPUs = resources.NanoCPUs
 	}
 	if resources.CPUPeriod != 0 {
 		cResources.CPUPeriod = resources.CPUPeriod

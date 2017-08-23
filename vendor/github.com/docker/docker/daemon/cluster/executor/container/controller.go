@@ -1,11 +1,7 @@
 package container
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -19,11 +15,13 @@ import (
 	"github.com/docker/swarmkit/agent/exec"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/log"
-	"github.com/docker/swarmkit/protobuf/ptypes"
+	gogotypes "github.com/gogo/protobuf/types"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"golang.org/x/time/rate"
 )
+
+const defaultGossipConvergeDelay = 2 * time.Second
 
 // controller implements agent.Controller against docker's API.
 //
@@ -43,8 +41,8 @@ type controller struct {
 var _ exec.Controller = &controller{}
 
 // NewController returns a docker exec runner for the provided task.
-func newController(b executorpkg.Backend, task *api.Task, secrets exec.SecretGetter) (*controller, error) {
-	adapter, err := newContainerAdapter(b, task, secrets)
+func newController(b executorpkg.Backend, task *api.Task, dependencies exec.DependencyGetter) (*controller, error) {
+	adapter, err := newContainerAdapter(b, task, dependencies)
 	if err != nil {
 		return nil, err
 	}
@@ -205,17 +203,11 @@ func (r *controller) Start(ctx context.Context) error {
 	}
 
 	// no health check
-	if ctnr.Config == nil || ctnr.Config.Healthcheck == nil {
+	if ctnr.Config == nil || ctnr.Config.Healthcheck == nil || len(ctnr.Config.Healthcheck.Test) == 0 || ctnr.Config.Healthcheck.Test[0] == "NONE" {
 		if err := r.adapter.activateServiceBinding(); err != nil {
 			log.G(ctx).WithError(err).Errorf("failed to activate service binding for container %s which has no healthcheck config", r.adapter.container.name())
 			return err
 		}
-		return nil
-	}
-
-	healthCmd := ctnr.Config.Healthcheck.Test
-
-	if len(healthCmd) == 0 || healthCmd[0] == "NONE" {
 		return nil
 	}
 
@@ -287,28 +279,48 @@ func (r *controller) Wait(pctx context.Context) error {
 		}
 	}()
 
-	err := r.adapter.wait(ctx)
-	if ctx.Err() != nil {
-		return ctx.Err()
+	waitC, err := r.adapter.wait(ctx)
+	if err != nil {
+		return err
 	}
 
-	if err != nil {
-		ee := &exitError{}
-		if ec, ok := err.(exec.ExitCoder); ok {
-			ee.code = ec.ExitCode()
+	if status := <-waitC; status.ExitCode() != 0 {
+		exitErr := &exitError{
+			code: status.ExitCode(),
 		}
+
+		// Set the cause if it is knowable.
 		select {
 		case e := <-healthErr:
-			ee.cause = e
+			exitErr.cause = e
 		default:
-			if err.Error() != "" {
-				ee.cause = err
+			if status.Err() != nil {
+				exitErr.cause = status.Err()
 			}
 		}
-		return ee
+
+		return exitErr
 	}
 
 	return nil
+}
+
+func (r *controller) hasServiceBinding() bool {
+	if r.task == nil {
+		return false
+	}
+
+	// service is attached to a network besides the default bridge
+	for _, na := range r.task.Networks {
+		if na.Network == nil ||
+			na.Network.DriverState == nil ||
+			na.Network.DriverState.Name == "bridge" && na.Network.Spec.Annotations.Name == "bridge" {
+			continue
+		}
+		return true
+	}
+
+	return false
 }
 
 // Shutdown the container cleanly.
@@ -321,10 +333,18 @@ func (r *controller) Shutdown(ctx context.Context) error {
 		r.cancelPull()
 	}
 
-	// remove container from service binding
-	if err := r.adapter.deactivateServiceBinding(); err != nil {
-		log.G(ctx).WithError(err).Errorf("failed to deactivate service binding for container %s", r.adapter.container.name())
-		return err
+	if r.hasServiceBinding() {
+		// remove container from service binding
+		if err := r.adapter.deactivateServiceBinding(); err != nil {
+			log.G(ctx).WithError(err).Warningf("failed to deactivate service binding for container %s", r.adapter.container.name())
+			// Don't return an error here, because failure to deactivate
+			// the service binding is expected if the container was never
+			// started.
+		}
+
+		// add a delay for gossip converge
+		// TODO(dongluochen): this delay shoud be configurable to fit different cluster size and network delay.
+		time.Sleep(defaultGossipConvergeDelay)
 	}
 
 	if err := r.adapter.shutdown(ctx); err != nil {
@@ -445,15 +465,27 @@ func (r *controller) Logs(ctx context.Context, publisher exec.LogPublisher, opti
 		return err
 	}
 
-	if err := r.waitReady(ctx); err != nil {
-		return errors.Wrap(err, "container not ready for logs")
+	// if we're following, wait for this container to be ready. there is a
+	// problem here: if the container will never be ready (for example, it has
+	// been totally deleted) then this will wait forever. however, this doesn't
+	// actually cause any UI issues, and shouldn't be a problem. the stuck wait
+	// will go away when the follow (context) is canceled.
+	if options.Follow {
+		if err := r.waitReady(ctx); err != nil {
+			return errors.Wrap(err, "container not ready for logs")
+		}
 	}
+	// if we're not following, we're not gonna wait for the container to be
+	// ready. just call logs. if the container isn't ready, the call will fail
+	// and return an error. no big deal, we don't care, we only want the logs
+	// we can get RIGHT NOW with no follow
 
-	rc, err := r.adapter.logs(ctx, options)
+	logsContext, cancel := context.WithCancel(ctx)
+	msgs, err := r.adapter.logs(logsContext, options)
+	defer cancel()
 	if err != nil {
 		return errors.Wrap(err, "failed getting container logs")
 	}
-	defer rc.Close()
 
 	var (
 		// use a rate limiter to keep things under control but also provides some
@@ -466,53 +498,46 @@ func (r *controller) Logs(ctx context.Context, publisher exec.LogPublisher, opti
 		}
 	)
 
-	brd := bufio.NewReader(rc)
 	for {
-		// so, message header is 8 bytes, treat as uint64, pull stream off MSB
-		var header uint64
-		if err := binary.Read(brd, binary.BigEndian, &header); err != nil {
-			if err == io.EOF {
-				return nil
-			}
-
-			return errors.Wrap(err, "failed reading log header")
+		msg, ok := <-msgs
+		if !ok {
+			// we're done here, no more messages
+			return nil
 		}
 
-		stream, size := (header>>(7<<3))&0xFF, header & ^(uint64(0xFF)<<(7<<3))
+		if msg.Err != nil {
+			// the defered cancel closes the adapter's log stream
+			return msg.Err
+		}
 
-		// limit here to decrease allocation back pressure.
-		if err := limiter.WaitN(ctx, int(size)); err != nil {
+		// wait here for the limiter to catch up
+		if err := limiter.WaitN(ctx, len(msg.Line)); err != nil {
 			return errors.Wrap(err, "failed rate limiter")
 		}
-
-		buf := make([]byte, size)
-		_, err := io.ReadFull(brd, buf)
-		if err != nil {
-			return errors.Wrap(err, "failed reading buffer")
-		}
-
-		// Timestamp is RFC3339Nano with 1 space after. Lop, parse, publish
-		parts := bytes.SplitN(buf, []byte(" "), 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid timestamp in log message: %v", buf)
-		}
-
-		ts, err := time.Parse(time.RFC3339Nano, string(parts[0]))
-		if err != nil {
-			return errors.Wrap(err, "failed to parse timestamp")
-		}
-
-		tsp, err := ptypes.TimestampProto(ts)
+		tsp, err := gogotypes.TimestampProto(msg.Timestamp)
 		if err != nil {
 			return errors.Wrap(err, "failed to convert timestamp")
+		}
+		var stream api.LogStream
+		if msg.Source == "stdout" {
+			stream = api.LogStreamStdout
+		} else if msg.Source == "stderr" {
+			stream = api.LogStreamStderr
+		}
+
+		// parse the details out of the Attrs map
+		attrs := []api.LogAttr{}
+		for k, v := range msg.Attrs {
+			attr := api.LogAttr{Key: k, Value: v}
+			attrs = append(attrs, attr)
 		}
 
 		if err := publisher.Publish(ctx, api.LogMessage{
 			Context:   msgctx,
 			Timestamp: tsp,
-			Stream:    api.LogStream(stream),
-
-			Data: parts[1],
+			Stream:    stream,
+			Attrs:     attrs,
+			Data:      msg.Line,
 		}); err != nil {
 			return errors.Wrap(err, "failed to publish log message")
 		}

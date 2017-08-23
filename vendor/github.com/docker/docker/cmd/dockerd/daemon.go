@@ -1,12 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -14,22 +13,24 @@ import (
 	"github.com/docker/distribution/uuid"
 	"github.com/docker/docker/api"
 	apiserver "github.com/docker/docker/api/server"
+	buildbackend "github.com/docker/docker/api/server/backend/build"
 	"github.com/docker/docker/api/server/middleware"
 	"github.com/docker/docker/api/server/router"
 	"github.com/docker/docker/api/server/router/build"
 	checkpointrouter "github.com/docker/docker/api/server/router/checkpoint"
 	"github.com/docker/docker/api/server/router/container"
+	distributionrouter "github.com/docker/docker/api/server/router/distribution"
 	"github.com/docker/docker/api/server/router/image"
 	"github.com/docker/docker/api/server/router/network"
 	pluginrouter "github.com/docker/docker/api/server/router/plugin"
 	swarmrouter "github.com/docker/docker/api/server/router/swarm"
 	systemrouter "github.com/docker/docker/api/server/router/system"
 	"github.com/docker/docker/api/server/router/volume"
-	"github.com/docker/docker/builder/dockerfile"
+	"github.com/docker/docker/cli/debug"
 	cliflags "github.com/docker/docker/cli/flags"
-	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/daemon/cluster"
+	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/libcontainerd"
@@ -40,21 +41,17 @@ import (
 	"github.com/docker/docker/pkg/pidfile"
 	"github.com/docker/docker/pkg/plugingetter"
 	"github.com/docker/docker/pkg/signal"
-	"github.com/docker/docker/pkg/system"
+	"github.com/docker/docker/plugin"
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
-	"github.com/docker/docker/utils"
 	"github.com/docker/go-connections/tlsconfig"
+	swarmapi "github.com/docker/swarmkit/api"
 	"github.com/spf13/pflag"
-)
-
-const (
-	flagDaemonConfigFile = "config-file"
 )
 
 // DaemonCli represents the daemon CLI.
 type DaemonCli struct {
-	*daemon.Config
+	*config.Config
 	configFile *string
 	flags      *pflag.FlagSet
 
@@ -66,52 +63,6 @@ type DaemonCli struct {
 // NewDaemonCli returns a daemon CLI
 func NewDaemonCli() *DaemonCli {
 	return &DaemonCli{}
-}
-
-func migrateKey(config *daemon.Config) (err error) {
-	// No migration necessary on Windows
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-
-	// Migrate trust key if exists at ~/.docker/key.json and owned by current user
-	oldPath := filepath.Join(cliconfig.ConfigDir(), cliflags.DefaultTrustKeyFile)
-	newPath := filepath.Join(getDaemonConfDir(config.Root), cliflags.DefaultTrustKeyFile)
-	if _, statErr := os.Stat(newPath); os.IsNotExist(statErr) && currentUserIsOwner(oldPath) {
-		defer func() {
-			// Ensure old path is removed if no error occurred
-			if err == nil {
-				err = os.Remove(oldPath)
-			} else {
-				logrus.Warnf("Key migration failed, key file not removed at %s", oldPath)
-				os.Remove(newPath)
-			}
-		}()
-
-		if err := system.MkdirAll(getDaemonConfDir(config.Root), os.FileMode(0644)); err != nil {
-			return fmt.Errorf("Unable to create daemon configuration directory: %s", err)
-		}
-
-		newFile, err := os.OpenFile(newPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return fmt.Errorf("error creating key file %q: %s", newPath, err)
-		}
-		defer newFile.Close()
-
-		oldFile, err := os.Open(oldPath)
-		if err != nil {
-			return fmt.Errorf("error opening key file %q: %s", oldPath, err)
-		}
-		defer oldFile.Close()
-
-		if _, err := io.Copy(newFile, oldFile); err != nil {
-			return fmt.Errorf("error copying key: %s", err)
-		}
-
-		logrus.Infof("Migrated key from %s to %s", oldPath, newPath)
-	}
-
-	return nil
 }
 
 func (cli *DaemonCli) start(opts daemonOptions) (err error) {
@@ -129,14 +80,8 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 	cli.configFile = &opts.configFile
 	cli.flags = opts.flags
 
-	if opts.common.TrustKey == "" {
-		opts.common.TrustKey = filepath.Join(
-			getDaemonConfDir(cli.Config.Root),
-			cliflags.DefaultTrustKeyFile)
-	}
-
 	if cli.Config.Debug {
-		utils.EnableDebug()
+		debug.Enable()
 	}
 
 	if cli.Config.Experimental {
@@ -186,9 +131,10 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 
 	if cli.Config.TLS {
 		tlsOptions := tlsconfig.Options{
-			CAFile:   cli.Config.CommonTLSOptions.CAFile,
-			CertFile: cli.Config.CommonTLSOptions.CertFile,
-			KeyFile:  cli.Config.CommonTLSOptions.KeyFile,
+			CAFile:             cli.Config.CommonTLSOptions.CAFile,
+			CertFile:           cli.Config.CommonTLSOptions.CertFile,
+			KeyFile:            cli.Config.CommonTLSOptions.KeyFile,
+			ExclusiveRootPools: true,
 		}
 
 		if cli.Config.TLSVerify {
@@ -209,6 +155,8 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 	api := apiserver.New(serverConfig)
 	cli.api = api
 
+	var hosts []string
+
 	for i := 0; i < len(cli.Config.Hosts); i++ {
 		var err error
 		if cli.Config.Hosts[i], err = dopts.ParseHost(cli.Config.TLS, cli.Config.Hosts[i]); err != nil {
@@ -226,7 +174,7 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 
 		// It's a bad idea to bind to TCP without tlsverify.
 		if proto == "tcp" && (serverConfig.TLSConfig == nil || serverConfig.TLSConfig.ClientAuth != tls.RequireAndVerifyClientCert) {
-			logrus.Warn("[!] DON'T BIND ON ANY IP ADDRESS WITHOUT setting -tlsverify IF YOU DON'T KNOW WHAT YOU'RE DOING [!]")
+			logrus.Warn("[!] DON'T BIND ON ANY IP ADDRESS WITHOUT setting --tlsverify IF YOU DON'T KNOW WHAT YOU'RE DOING [!]")
 		}
 		ls, err := listeners.Init(proto, addr, serverConfig.SocketGroup, serverConfig.TLSConfig)
 		if err != nil {
@@ -240,15 +188,9 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 			}
 		}
 		logrus.Debugf("Listener created for HTTP on %s (%s)", proto, addr)
+		hosts = append(hosts, protoAddrParts[1])
 		api.Accept(addr, ls...)
 	}
-
-	if err := migrateKey(cli.Config); err != nil {
-		return err
-	}
-
-	// FIXME: why is this down here instead of with the other TrustKey logic above?
-	cli.TrustKeyPath = opts.common.TrustKey
 
 	registryService := registry.NewService(cli.Config.ServiceOptions)
 	containerdRemote, err := libcontainerd.New(cli.getLibcontainerdRoot(), cli.getPlatformRemoteOptions()...)
@@ -260,9 +202,25 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 		<-stopc // wait for daemonCli.start() to return
 	})
 
-	d, err := daemon.NewDaemon(cli.Config, registryService, containerdRemote)
+	// Notify that the API is active, but before daemon is set up.
+	preNotifySystem()
+
+	pluginStore := plugin.NewStore()
+
+	if err := cli.initMiddlewares(api, serverConfig, pluginStore); err != nil {
+		logrus.Fatalf("Error creating middlewares: %v", err)
+	}
+
+	d, err := daemon.NewDaemon(cli.Config, registryService, containerdRemote, pluginStore)
 	if err != nil {
 		return fmt.Errorf("Error starting daemon: %v", err)
+	}
+
+	d.StoreHosts(hosts)
+
+	// validate after NewDaemon has restored enabled plugins. Dont change order.
+	if err := validateAuthzPlugins(cli.Config.AuthorizationPlugins, pluginStore); err != nil {
+		return fmt.Errorf("Error validating authorization plugin: %v", err)
 	}
 
 	if cli.Config.MetricsAddress != "" {
@@ -276,6 +234,10 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 
 	name, _ := os.Hostname()
 
+	// Use a buffered channel to pass changes from store watch API to daemon
+	// A buffer allows store watch API and daemon processing to not wait for each other
+	watchStream := make(chan *swarmapi.WatchMessage, 32)
+
 	c, err := cluster.New(cluster.Config{
 		Root:                   cli.Config.Root,
 		Name:                   name,
@@ -283,9 +245,15 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 		NetworkSubnetsProvider: d,
 		DefaultAdvertiseAddr:   cli.Config.SwarmDefaultAdvertiseAddr,
 		RuntimeRoot:            cli.getSwarmRunRoot(),
+		WatchStream:            watchStream,
 	})
 	if err != nil {
 		logrus.Fatalf("Error creating cluster component: %v", err)
+	}
+	d.SetCluster(c)
+	err = c.Start()
+	if err != nil {
+		logrus.Fatalf("Error starting cluster component: %v", err)
 	}
 
 	// Restart all autostart containers which has a swarm endpoint
@@ -303,12 +271,12 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 
 	cli.d = d
 
-	// initMiddlewares needs cli.d to be populated. Dont change this init order.
-	if err := cli.initMiddlewares(api, serverConfig); err != nil {
-		logrus.Fatalf("Error creating middlewares: %v", err)
-	}
-	d.SetCluster(c)
 	initRouter(api, d, c)
+
+	// process cluster change notifications
+	watchCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.ProcessClusterNotifications(watchCtx, watchStream)
 
 	cli.setupConfigReloadTrap()
 
@@ -335,7 +303,7 @@ func (cli *DaemonCli) start(opts daemonOptions) (err error) {
 }
 
 func (cli *DaemonCli) reloadConfig() {
-	reload := func(config *daemon.Config) {
+	reload := func(config *config.Config) {
 
 		// Revalidate and reload the authorization plugins
 		if err := validateAuthzPlugins(config.AuthorizationPlugins, cli.d.PluginStore); err != nil {
@@ -350,20 +318,20 @@ func (cli *DaemonCli) reloadConfig() {
 		}
 
 		if config.IsValueSet("debug") {
-			debugEnabled := utils.IsDebugEnabled()
+			debugEnabled := debug.IsEnabled()
 			switch {
 			case debugEnabled && !config.Debug: // disable debug
-				utils.DisableDebug()
+				debug.Disable()
 				cli.api.DisableProfiler()
 			case config.Debug && !debugEnabled: // enable debug
-				utils.EnableDebug()
+				debug.Enable()
 				cli.api.EnableProfiler()
 			}
 
 		}
 	}
 
-	if err := daemon.ReloadConfiguration(*cli.configFile, cli.flags, reload); err != nil {
+	if err := config.Reload(*cli.configFile, cli.flags, reload); err != nil {
 		logrus.Error(err)
 	}
 }
@@ -395,45 +363,63 @@ func shutdownDaemon(d *daemon.Daemon) {
 	}
 }
 
-func loadDaemonCliConfig(opts daemonOptions) (*daemon.Config, error) {
-	config := opts.daemonConfig
+func loadDaemonCliConfig(opts daemonOptions) (*config.Config, error) {
+	conf := opts.daemonConfig
 	flags := opts.flags
-	config.Debug = opts.common.Debug
-	config.Hosts = opts.common.Hosts
-	config.LogLevel = opts.common.LogLevel
-	config.TLS = opts.common.TLS
-	config.TLSVerify = opts.common.TLSVerify
-	config.CommonTLSOptions = daemon.CommonTLSOptions{}
+	conf.Debug = opts.common.Debug
+	conf.Hosts = opts.common.Hosts
+	conf.LogLevel = opts.common.LogLevel
+	conf.TLS = opts.common.TLS
+	conf.TLSVerify = opts.common.TLSVerify
+	conf.CommonTLSOptions = config.CommonTLSOptions{}
 
 	if opts.common.TLSOptions != nil {
-		config.CommonTLSOptions.CAFile = opts.common.TLSOptions.CAFile
-		config.CommonTLSOptions.CertFile = opts.common.TLSOptions.CertFile
-		config.CommonTLSOptions.KeyFile = opts.common.TLSOptions.KeyFile
+		conf.CommonTLSOptions.CAFile = opts.common.TLSOptions.CAFile
+		conf.CommonTLSOptions.CertFile = opts.common.TLSOptions.CertFile
+		conf.CommonTLSOptions.KeyFile = opts.common.TLSOptions.KeyFile
+	}
+
+	if conf.TrustKeyPath == "" {
+		conf.TrustKeyPath = filepath.Join(
+			getDaemonConfDir(conf.Root),
+			defaultTrustKeyFile)
+	}
+
+	if flags.Changed("graph") && flags.Changed("data-root") {
+		return nil, fmt.Errorf(`cannot specify both "--graph" and "--data-root" option`)
 	}
 
 	if opts.configFile != "" {
-		c, err := daemon.MergeDaemonConfigurations(config, flags, opts.configFile)
+		c, err := config.MergeDaemonConfigurations(conf, flags, opts.configFile)
 		if err != nil {
-			if flags.Changed(flagDaemonConfigFile) || !os.IsNotExist(err) {
+			if flags.Changed("config-file") || !os.IsNotExist(err) {
 				return nil, fmt.Errorf("unable to configure the Docker daemon with file %s: %v\n", opts.configFile, err)
 			}
 		}
 		// the merged configuration can be nil if the config file didn't exist.
 		// leave the current configuration as it is if when that happens.
 		if c != nil {
-			config = c
+			conf = c
 		}
 	}
 
-	if err := daemon.ValidateConfiguration(config); err != nil {
+	if err := config.Validate(conf); err != nil {
 		return nil, err
+	}
+
+	if conf.V2Only == false {
+		logrus.Warnf(`The "disable-legacy-registry" option is deprecated and wil be removed in Docker v17.12. Interacting with legacy (v1) registries will no longer be supported in Docker v17.12"`)
+	}
+
+	if flags.Changed("graph") {
+		logrus.Warnf(`The "-g / --graph" flag is deprecated. Please use "--data-root" instead`)
 	}
 
 	// Labels of the docker engine used to allow multiple values associated with the same key.
 	// This is deprecated in 1.13, and, be removed after 3 release cycles.
 	// The following will check the conflict of labels, and report a warning for deprecation.
 	//
-	// TODO: After 3 release cycles (1.16) an error will be returned, and labels will be
+	// TODO: After 3 release cycles (17.12) an error will be returned, and labels will be
 	// sanitized to consolidate duplicate key-value pairs (config.Labels = newLabels):
 	//
 	// newLabels, err := daemon.GetConflictFreeLabels(config.Labels)
@@ -442,20 +428,20 @@ func loadDaemonCliConfig(opts daemonOptions) (*daemon.Config, error) {
 	// }
 	// config.Labels = newLabels
 	//
-	if _, err := daemon.GetConflictFreeLabels(config.Labels); err != nil {
+	if _, err := config.GetConflictFreeLabels(conf.Labels); err != nil {
 		logrus.Warnf("Engine labels with duplicate keys and conflicting values have been deprecated: %s", err)
 	}
 
 	// Regardless of whether the user sets it to true or false, if they
 	// specify TLSVerify at all then we need to turn on TLS
-	if config.IsValueSet(cliflags.FlagTLSVerify) {
-		config.TLS = true
+	if conf.IsValueSet(cliflags.FlagTLSVerify) {
+		conf.TLS = true
 	}
 
 	// ensure that the log level is the one set after merging configurations
-	cliflags.SetLogLevel(config.LogLevel)
+	cliflags.SetLogLevel(conf.LogLevel)
 
-	return config, nil
+	return conf, nil
 }
 
 func initRouter(s *apiserver.Server, d *daemon.Daemon, c *cluster.Cluster) {
@@ -468,9 +454,10 @@ func initRouter(s *apiserver.Server, d *daemon.Daemon, c *cluster.Cluster) {
 		image.NewRouter(d, decoder),
 		systemrouter.NewRouter(d, c),
 		volume.NewRouter(d),
-		build.NewRouter(dockerfile.NewBuildManager(d)),
+		build.NewRouter(buildbackend.NewBackend(d, d), d),
 		swarmrouter.NewRouter(c),
 		pluginrouter.NewRouter(d.PluginManager()),
+		distributionrouter.NewRouter(d),
 	}
 
 	if d.NetworkControllerEnabled() {
@@ -487,27 +474,25 @@ func initRouter(s *apiserver.Server, d *daemon.Daemon, c *cluster.Cluster) {
 		}
 	}
 
-	s.InitRouter(utils.IsDebugEnabled(), routers...)
+	s.InitRouter(debug.IsEnabled(), routers...)
 }
 
-func (cli *DaemonCli) initMiddlewares(s *apiserver.Server, cfg *apiserver.Config) error {
+func (cli *DaemonCli) initMiddlewares(s *apiserver.Server, cfg *apiserver.Config, pluginStore *plugin.Store) error {
 	v := cfg.Version
 
-	exp := middleware.NewExperimentalMiddleware(cli.d.HasExperimental())
+	exp := middleware.NewExperimentalMiddleware(cli.Config.Experimental)
 	s.UseMiddleware(exp)
 
 	vm := middleware.NewVersionMiddleware(v, api.DefaultVersion, api.MinVersion)
 	s.UseMiddleware(vm)
 
-	if cfg.EnableCors {
+	if cfg.EnableCors || cfg.CorsHeaders != "" {
 		c := middleware.NewCORSMiddleware(cfg.CorsHeaders)
 		s.UseMiddleware(c)
 	}
 
-	if err := validateAuthzPlugins(cli.Config.AuthorizationPlugins, cli.d.PluginStore); err != nil {
-		return fmt.Errorf("Error validating authorization plugin: %v", err)
-	}
-	cli.authzMiddleware = authorization.NewMiddleware(cli.Config.AuthorizationPlugins, cli.d.PluginStore)
+	cli.authzMiddleware = authorization.NewMiddleware(cli.Config.AuthorizationPlugins, pluginStore)
+	cli.Config.AuthzMiddleware = cli.authzMiddleware
 	s.UseMiddleware(cli.authzMiddleware)
 	return nil
 }
@@ -516,7 +501,7 @@ func (cli *DaemonCli) initMiddlewares(s *apiserver.Server, cfg *apiserver.Config
 // plugins present on the host and available to the daemon
 func validateAuthzPlugins(requestedPlugins []string, pg plugingetter.PluginGetter) error {
 	for _, reqPlugin := range requestedPlugins {
-		if _, err := pg.Get(reqPlugin, authorization.AuthZApiImplements, plugingetter.LOOKUP); err != nil {
+		if _, err := pg.Get(reqPlugin, authorization.AuthZApiImplements, plugingetter.Lookup); err != nil {
 			return err
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"unicode"
 
 	"github.com/davecgh/go-spew/spew"
 )
@@ -19,10 +20,29 @@ type TestingT interface {
 
 // Equal compare the actual value to the expected value and fails the test if
 // they are not equal.
-func Equal(t TestingT, actual, expected interface{}) {
+func Equal(t TestingT, actual, expected interface{}, extra ...string) {
 	if expected != actual {
-		fatal(t, "Expected '%v' (%T) got '%v' (%T)", expected, expected, actual, actual)
+		fatalWithExtra(t, extra, "Expected '%v' (%T) got '%v' (%T)", expected, expected, actual, actual)
 	}
+}
+
+// EqualNormalizedString compare the actual value to the expected value after applying the specified
+// transform function. It fails the test if these two transformed string are not equal.
+// For example `EqualNormalizedString(t, RemoveSpace, "foo\n", "foo")` wouldn't fail the test as
+// spaces (and thus '\n') are removed before comparing the string.
+func EqualNormalizedString(t TestingT, transformFun func(rune) rune, actual, expected string) {
+	if strings.Map(transformFun, actual) != strings.Map(transformFun, expected) {
+		fatal(t, "Expected '%v' got '%v'", expected, expected, actual, actual)
+	}
+}
+
+// RemoveSpace returns -1 if the specified runes is considered as a space (unicode)
+// and the rune itself otherwise.
+func RemoveSpace(r rune) rune {
+	if unicode.IsSpace(r) {
+		return -1
+	}
+	return r
 }
 
 //EqualStringSlice compares two slices and fails the test if they do not contain
@@ -83,8 +103,23 @@ func NotNil(t TestingT, obj interface{}) {
 	}
 }
 
+// Nil fails the test if the object is not nil
+func Nil(t TestingT, obj interface{}) {
+	if obj != nil {
+		fatal(t, "Expected nil value, got (%T) %s", obj, obj)
+	}
+}
+
 func fatal(t TestingT, format string, args ...interface{}) {
 	t.Fatalf(errorSource()+format, args...)
+}
+
+func fatalWithExtra(t TestingT, extra []string, format string, args ...interface{}) {
+	msg := fmt.Sprintf(errorSource()+format, args...)
+	if len(extra) > 0 {
+		msg += ": " + strings.Join(extra, ", ")
+	}
+	t.Fatalf(msg)
 }
 
 // See testing.decorate()
