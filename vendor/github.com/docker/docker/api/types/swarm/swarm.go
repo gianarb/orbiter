@@ -135,6 +135,7 @@ type InitRequest struct {
 	ForceNewCluster  bool
 	Spec             Spec
 	AutoLockManagers bool
+	Availability     NodeAvailability
 }
 
 // JoinRequest is the request used to join a swarm.
@@ -143,6 +144,7 @@ type JoinRequest struct {
 	AdvertiseAddr string
 	RemoteAddrs   []string
 	JoinToken     string // accept by secret
+	Availability  NodeAvailability
 }
 
 // UnlockRequest is the request used to unlock a swarm.
@@ -177,10 +179,10 @@ type Info struct {
 	Error            string
 
 	RemoteManagers []Peer
-	Nodes          int
-	Managers       int
+	Nodes          int `json:",omitempty"`
+	Managers       int `json:",omitempty"`
 
-	Cluster ClusterInfo
+	Cluster *ClusterInfo `json:",omitempty"`
 }
 
 // Peer represents a peer.

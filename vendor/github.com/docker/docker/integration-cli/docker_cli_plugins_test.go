@@ -2,15 +2,14 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
-
-	"github.com/docker/docker/pkg/integration/checker"
-	"github.com/go-check/check"
-
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/docker/docker/integration-cli/checker"
+	icmd "github.com/docker/docker/pkg/testutil/cmd"
+	"github.com/go-check/check"
 )
 
 var (
@@ -48,7 +47,7 @@ func (s *DockerSuite) TestPluginBasicOps(c *check.C) {
 	c.Assert(err, checker.IsNil)
 	c.Assert(out, checker.Contains, pNameWithTag)
 
-	_, err = os.Stat(filepath.Join(dockerBasePath, "plugins", id))
+	_, err = os.Stat(filepath.Join(testEnv.DockerBasePath(), "plugins", id))
 	if !os.IsNotExist(err) {
 		c.Fatal(err)
 	}
@@ -182,7 +181,7 @@ func (s *DockerRegistrySuite) TestPluginInstallImage(c *check.C) {
 
 	out, _, err := dockerCmdWithError("plugin", "install", repoName)
 	c.Assert(err, checker.NotNil)
-	c.Assert(out, checker.Contains, "target is image")
+	c.Assert(out, checker.Contains, `Encountered remote "application/vnd.docker.container.image.v1+json"(image) when fetching`)
 }
 
 func (s *DockerSuite) TestPluginEnableDisableNegative(c *check.C) {
@@ -305,15 +304,11 @@ func (s *DockerTrustSuite) TestPluginTrustedInstall(c *check.C) {
 
 	trustedName := s.setupTrustedplugin(c, pNameWithTag, "trusted-plugin-install")
 
-	installCmd := exec.Command(dockerBinary, "plugin", "install", "--grant-all-permissions", trustedName)
-	s.trustedCmd(installCmd)
-	out, _, err := runCommandWithOutput(installCmd)
+	icmd.RunCmd(icmd.Command(dockerBinary, "plugin", "install", "--grant-all-permissions", trustedName), trustedCmd).Assert(c, icmd.Expected{
+		Out: trustedName,
+	})
 
-	c.Assert(strings.TrimSpace(out), checker.Contains, trustedName)
-	c.Assert(err, checker.IsNil)
-	c.Assert(strings.TrimSpace(out), checker.Contains, trustedName)
-
-	out, _, err = dockerCmdWithError("plugin", "ls")
+	out, _, err := dockerCmdWithError("plugin", "ls")
 	c.Assert(err, checker.IsNil)
 	c.Assert(out, checker.Contains, "true")
 
@@ -330,11 +325,7 @@ func (s *DockerTrustSuite) TestPluginTrustedInstall(c *check.C) {
 	c.Assert(strings.TrimSpace(out), checker.Contains, trustedName)
 
 	// Try untrusted pull to ensure we pushed the tag to the registry
-	installCmd = exec.Command(dockerBinary, "plugin", "install", "--disable-content-trust=true", "--grant-all-permissions", trustedName)
-	s.trustedCmd(installCmd)
-	out, _, err = runCommandWithOutput(installCmd)
-	c.Assert(err, check.IsNil, check.Commentf(out))
-	c.Assert(string(out), checker.Contains, "Status: Downloaded", check.Commentf(out))
+	icmd.RunCmd(icmd.Command(dockerBinary, "plugin", "install", "--disable-content-trust=true", "--grant-all-permissions", trustedName), trustedCmd).Assert(c, SuccessDownloaded)
 
 	out, _, err = dockerCmdWithError("plugin", "ls")
 	c.Assert(err, checker.IsNil)
@@ -352,12 +343,89 @@ func (s *DockerTrustSuite) TestPluginUntrustedInstall(c *check.C) {
 	dockerCmd(c, "plugin", "rm", "-f", pluginName)
 
 	// Try trusted install on untrusted plugin
-	installCmd := exec.Command(dockerBinary, "plugin", "install", "--grant-all-permissions", pluginName)
-	s.trustedCmd(installCmd)
-	out, _, err := runCommandWithOutput(installCmd)
+	icmd.RunCmd(icmd.Command(dockerBinary, "plugin", "install", "--grant-all-permissions", pluginName), trustedCmd).Assert(c, icmd.Expected{
+		ExitCode: 1,
+		Err:      "Error: remote trust data does not exist",
+	})
+}
 
-	c.Assert(err, check.NotNil, check.Commentf(out))
-	c.Assert(string(out), checker.Contains, "Error: remote trust data does not exist", check.Commentf(out))
+func (s *DockerSuite) TestPluginIDPrefix(c *check.C) {
+	testRequires(c, DaemonIsLinux, IsAmd64, Network)
+	_, _, err := dockerCmdWithError("plugin", "install", "--disable", "--grant-all-permissions", pNameWithTag)
+	c.Assert(err, checker.IsNil)
+
+	// Find ID first
+	id, _, err := dockerCmdWithError("plugin", "inspect", "-f", "{{.Id}}", pNameWithTag)
+	id = strings.TrimSpace(id)
+	c.Assert(err, checker.IsNil)
+
+	// List current state
+	out, _, err := dockerCmdWithError("plugin", "ls")
+	c.Assert(err, checker.IsNil)
+	c.Assert(out, checker.Contains, pName)
+	c.Assert(out, checker.Contains, pTag)
+	c.Assert(out, checker.Contains, "false")
+
+	env, _ := dockerCmd(c, "plugin", "inspect", "-f", "{{.Settings.Env}}", id[:5])
+	c.Assert(strings.TrimSpace(env), checker.Equals, "[DEBUG=0]")
+
+	dockerCmd(c, "plugin", "set", id[:5], "DEBUG=1")
+
+	env, _ = dockerCmd(c, "plugin", "inspect", "-f", "{{.Settings.Env}}", id[:5])
+	c.Assert(strings.TrimSpace(env), checker.Equals, "[DEBUG=1]")
+
+	// Enable
+	_, _, err = dockerCmdWithError("plugin", "enable", id[:5])
+	c.Assert(err, checker.IsNil)
+	out, _, err = dockerCmdWithError("plugin", "ls")
+	c.Assert(err, checker.IsNil)
+	c.Assert(out, checker.Contains, pName)
+	c.Assert(out, checker.Contains, pTag)
+	c.Assert(out, checker.Contains, "true")
+
+	// Disable
+	_, _, err = dockerCmdWithError("plugin", "disable", id[:5])
+	c.Assert(err, checker.IsNil)
+	out, _, err = dockerCmdWithError("plugin", "ls")
+	c.Assert(err, checker.IsNil)
+	c.Assert(out, checker.Contains, pName)
+	c.Assert(out, checker.Contains, pTag)
+	c.Assert(out, checker.Contains, "false")
+
+	// Remove
+	out, _, err = dockerCmdWithError("plugin", "remove", id[:5])
+	c.Assert(err, checker.IsNil)
+	// List returns none
+	out, _, err = dockerCmdWithError("plugin", "ls")
+	c.Assert(err, checker.IsNil)
+	c.Assert(out, checker.Not(checker.Contains), pName)
+	c.Assert(out, checker.Not(checker.Contains), pTag)
+}
+
+func (s *DockerSuite) TestPluginListDefaultFormat(c *check.C) {
+	testRequires(c, DaemonIsLinux, Network, IsAmd64)
+
+	config, err := ioutil.TempDir("", "config-file-")
+	c.Assert(err, check.IsNil)
+	defer os.RemoveAll(config)
+
+	err = ioutil.WriteFile(filepath.Join(config, "config.json"), []byte(`{"pluginsFormat": "raw"}`), 0644)
+	c.Assert(err, check.IsNil)
+
+	out, _ := dockerCmd(c, "plugin", "install", "--grant-all-permissions", pName)
+	c.Assert(strings.TrimSpace(out), checker.Contains, pName)
+
+	out, _ = dockerCmd(c, "plugin", "inspect", "--format", "{{.ID}}", pNameWithTag)
+	id := strings.TrimSpace(out)
+
+	// We expect the format to be in `raw + --no-trunc`
+	expectedOutput := fmt.Sprintf(`plugin_id: %s
+name: %s
+description: A sample volume plugin for Docker
+enabled: true`, id, pNameWithTag)
+
+	out, _ = dockerCmd(c, "--config", config, "plugin", "ls", "--no-trunc")
+	c.Assert(strings.TrimSpace(out), checker.Contains, expectedOutput)
 }
 
 func (s *DockerSuite) TestPluginUpgrade(c *check.C) {
@@ -377,14 +445,14 @@ func (s *DockerSuite) TestPluginUpgrade(c *check.C) {
 	id := strings.TrimSpace(out)
 
 	// make sure "v2" does not exists
-	_, err = os.Stat(filepath.Join(dockerBasePath, "plugins", id, "rootfs", "v2"))
+	_, err = os.Stat(filepath.Join(testEnv.DockerBasePath(), "plugins", id, "rootfs", "v2"))
 	c.Assert(os.IsNotExist(err), checker.True, check.Commentf(out))
 
 	dockerCmd(c, "plugin", "disable", "-f", plugin)
 	dockerCmd(c, "plugin", "upgrade", "--grant-all-permissions", "--skip-remote-check", plugin, pluginV2)
 
 	// make sure "v2" file exists
-	_, err = os.Stat(filepath.Join(dockerBasePath, "plugins", id, "rootfs", "v2"))
+	_, err = os.Stat(filepath.Join(testEnv.DockerBasePath(), "plugins", id, "rootfs", "v2"))
 	c.Assert(err, checker.IsNil)
 
 	dockerCmd(c, "plugin", "enable", plugin)

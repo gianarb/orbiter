@@ -9,11 +9,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/image"
-	"github.com/docker/docker/reference"
 	"golang.org/x/net/context"
 )
 
@@ -62,7 +62,7 @@ type PathFileInfo struct {
 	os.FileInfo
 	// FilePath holds the absolute path to the file.
 	FilePath string
-	// Name holds the basename for the file.
+	// FileName holds the basename for the file.
 	FileName string
 }
 
@@ -109,7 +109,7 @@ type Backend interface {
 
 	// GetImageOnBuild looks up a Docker image referenced by `name`.
 	GetImageOnBuild(name string) (Image, error)
-	// TagImage tags an image with newTag
+	// TagImageWithReference tags an image with newTag
 	TagImageWithReference(image.ID, reference.Named) error
 	// PullOnBuild tells Docker to pull image referenced by `name`.
 	PullOnBuild(ctx context.Context, name string, authConfigs map[string]types.AuthConfig, output io.Writer) (Image, error)
@@ -129,7 +129,7 @@ type Backend interface {
 	ContainerWait(containerID string, timeout time.Duration) (int, error)
 	// ContainerUpdateCmdOnBuild updates container.Path and container.Args
 	ContainerUpdateCmdOnBuild(containerID string, cmd []string) error
-	// ContainerCreateWorkdir creates the workdir (currently only used on Windows)
+	// ContainerCreateWorkdir creates the workdir
 	ContainerCreateWorkdir(containerID string) error
 
 	// ContainerCopy copies/extracts a source FileInfo to a destination path inside a container
@@ -146,6 +146,9 @@ type Backend interface {
 
 	// SquashImage squashes the fs layers from the provided image down to the specified `to` image
 	SquashImage(from string, to string) (string, error)
+
+	// MountImage returns mounted path with rootfs of an image.
+	MountImage(name string) (string, func() error, error)
 }
 
 // Image represents a Docker image used by the builder.
@@ -163,7 +166,7 @@ type ImageCacheBuilder interface {
 // ImageCache abstracts an image cache.
 // (parent image, child runconfig) -> child image
 type ImageCache interface {
-	// GetCachedImageOnBuild returns a reference to a cached image whose parent equals `parent`
+	// GetCache returns a reference to a cached image whose parent equals `parent`
 	// and runconfig equals `cfg`. A cache miss is expected to return an empty ID and a nil error.
 	GetCache(parentID string, cfg *container.Config) (imageID string, err error)
 }

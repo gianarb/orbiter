@@ -3,9 +3,9 @@ package main
 import (
 	"strings"
 
-	"github.com/docker/docker/pkg/integration/checker"
-	icmd "github.com/docker/docker/pkg/integration/cmd"
+	"github.com/docker/docker/integration-cli/checker"
 	"github.com/docker/docker/pkg/stringid"
+	icmd "github.com/docker/docker/pkg/testutil/cmd"
 	"github.com/go-check/check"
 )
 
@@ -104,7 +104,7 @@ func (s *DockerSuite) TestRenameAnonymousContainer(c *check.C) {
 	dockerCmd(c, "start", "container1")
 
 	count := "-c"
-	if daemonPlatform == "windows" {
+	if testEnv.DaemonPlatform() == "windows" {
 		count = "-n"
 	}
 

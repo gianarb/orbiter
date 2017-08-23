@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 
 	"github.com/docker/docker/api/types/swarm"
-	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/docker/docker/integration-cli/checker"
 	"github.com/go-check/check"
 )
 
@@ -14,15 +14,15 @@ func (s *DockerSwarmSuite) TestSecretInspect(c *check.C) {
 	d := s.AddDaemon(c, true, true)
 
 	testName := "test_secret"
-	id := d.createSecret(c, swarm.SecretSpec{
-		swarm.Annotations{
+	id := d.CreateSecret(c, swarm.SecretSpec{
+		Annotations: swarm.Annotations{
 			Name: testName,
 		},
-		[]byte("TESTINGDATA"),
+		Data: []byte("TESTINGDATA"),
 	})
 	c.Assert(id, checker.Not(checker.Equals), "", check.Commentf("secrets: %s", id))
 
-	secret := d.getSecret(c, id)
+	secret := d.GetSecret(c, id)
 	c.Assert(secret.Spec.Name, checker.Equals, testName)
 
 	out, err := d.Cmd("secret", "inspect", testName)
@@ -41,15 +41,15 @@ func (s *DockerSwarmSuite) TestSecretInspectMultiple(c *check.C) {
 		"test1",
 	}
 	for _, n := range testNames {
-		id := d.createSecret(c, swarm.SecretSpec{
-			swarm.Annotations{
+		id := d.CreateSecret(c, swarm.SecretSpec{
+			Annotations: swarm.Annotations{
 				Name: n,
 			},
-			[]byte("TESTINGDATA"),
+			Data: []byte("TESTINGDATA"),
 		})
 		c.Assert(id, checker.Not(checker.Equals), "", check.Commentf("secrets: %s", id))
 
-		secret := d.getSecret(c, id)
+		secret := d.GetSecret(c, id)
 		c.Assert(secret.Spec.Name, checker.Equals, n)
 
 	}

@@ -10,26 +10,26 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/swarm"
-	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/docker/docker/integration-cli/checker"
 	"github.com/go-check/check"
 )
 
 func (s *DockerSwarmSuite) TestServiceCreateMountVolume(c *check.C) {
 	d := s.AddDaemon(c, true, true)
-	out, err := d.Cmd("service", "create", "--mount", "type=volume,source=foo,target=/foo,volume-nocopy", "busybox", "top")
+	out, err := d.Cmd("service", "create", "--detach=true", "--mount", "type=volume,source=foo,target=/foo,volume-nocopy", "busybox", "top")
 	c.Assert(err, checker.IsNil, check.Commentf(out))
 	id := strings.TrimSpace(out)
 
 	var tasks []swarm.Task
 	waitAndAssert(c, defaultReconciliationTimeout, func(c *check.C) (interface{}, check.CommentInterface) {
-		tasks = d.getServiceTasks(c, id)
+		tasks = d.GetServiceTasks(c, id)
 		return len(tasks) > 0, nil
 	}, checker.Equals, true)
 
 	task := tasks[0]
 	waitAndAssert(c, defaultReconciliationTimeout, func(c *check.C) (interface{}, check.CommentInterface) {
 		if task.NodeID == "" || task.Status.ContainerStatus.ContainerID == "" {
-			task = d.getTask(c, task.ID)
+			task = d.GetTask(c, task.ID)
 		}
 		return task.NodeID != "" && task.Status.ContainerStatus.ContainerID != "", nil
 	}, checker.Equals, true)
@@ -67,11 +67,11 @@ func (s *DockerSwarmSuite) TestServiceCreateWithSecretSimple(c *check.C) {
 
 	serviceName := "test-service-secret"
 	testName := "test_secret"
-	id := d.createSecret(c, swarm.SecretSpec{
-		swarm.Annotations{
+	id := d.CreateSecret(c, swarm.SecretSpec{
+		Annotations: swarm.Annotations{
 			Name: testName,
 		},
-		[]byte("TESTINGDATA"),
+		Data: []byte("TESTINGDATA"),
 	})
 	c.Assert(id, checker.Not(checker.Equals), "", check.Commentf("secrets: %s", id))
 
@@ -97,11 +97,11 @@ func (s *DockerSwarmSuite) TestServiceCreateWithSecretSourceTarget(c *check.C) {
 
 	serviceName := "test-service-secret"
 	testName := "test_secret"
-	id := d.createSecret(c, swarm.SecretSpec{
-		swarm.Annotations{
+	id := d.CreateSecret(c, swarm.SecretSpec{
+		Annotations: swarm.Annotations{
 			Name: testName,
 		},
-		[]byte("TESTINGDATA"),
+		Data: []byte("TESTINGDATA"),
 	})
 	c.Assert(id, checker.Not(checker.Equals), "", check.Commentf("secrets: %s", id))
 	testTarget := "testing"
@@ -123,20 +123,20 @@ func (s *DockerSwarmSuite) TestServiceCreateWithSecretSourceTarget(c *check.C) {
 
 func (s *DockerSwarmSuite) TestServiceCreateMountTmpfs(c *check.C) {
 	d := s.AddDaemon(c, true, true)
-	out, err := d.Cmd("service", "create", "--mount", "type=tmpfs,target=/foo,tmpfs-size=1MB", "busybox", "sh", "-c", "mount | grep foo; tail -f /dev/null")
+	out, err := d.Cmd("service", "create", "--detach=true", "--mount", "type=tmpfs,target=/foo,tmpfs-size=1MB", "busybox", "sh", "-c", "mount | grep foo; tail -f /dev/null")
 	c.Assert(err, checker.IsNil, check.Commentf(out))
 	id := strings.TrimSpace(out)
 
 	var tasks []swarm.Task
 	waitAndAssert(c, defaultReconciliationTimeout, func(c *check.C) (interface{}, check.CommentInterface) {
-		tasks = d.getServiceTasks(c, id)
+		tasks = d.GetServiceTasks(c, id)
 		return len(tasks) > 0, nil
 	}, checker.Equals, true)
 
 	task := tasks[0]
 	waitAndAssert(c, defaultReconciliationTimeout, func(c *check.C) (interface{}, check.CommentInterface) {
 		if task.NodeID == "" || task.Status.ContainerStatus.ContainerID == "" {
-			task = d.getTask(c, task.ID)
+			task = d.GetTask(c, task.ID)
 		}
 		return task.NodeID != "" && task.Status.ContainerStatus.ContainerID != "", nil
 	}, checker.Equals, true)
