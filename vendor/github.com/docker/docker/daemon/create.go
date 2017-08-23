@@ -20,7 +20,7 @@ import (
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/runconfig"
-	"github.com/opencontainers/runc/libcontainer/label"
+	"github.com/opencontainers/selinux/go-selinux/label"
 )
 
 // CreateManagedContainer creates a container that is managed by a Service
@@ -151,8 +151,16 @@ func (daemon *Daemon) create(params types.ContainerCreateConfig, managed bool) (
 		return nil, err
 	}
 	daemon.Register(container)
+	stateCtr.set(container.ID, "stopped")
 	daemon.LogContainerEvent(container, "create")
 	return container, nil
+}
+
+func toHostConfigSelinuxLabels(labels []string) []string {
+	for i, l := range labels {
+		labels[i] = "label=" + l
+	}
+	return labels
 }
 
 func (daemon *Daemon) generateSecurityOpt(hostConfig *containertypes.HostConfig) ([]string, error) {
@@ -167,7 +175,7 @@ func (daemon *Daemon) generateSecurityOpt(hostConfig *containertypes.HostConfig)
 	pidMode := hostConfig.PidMode
 	privileged := hostConfig.Privileged
 	if ipcMode.IsHost() || pidMode.IsHost() || privileged {
-		return label.DisableSecOpt(), nil
+		return toHostConfigSelinuxLabels(label.DisableSecOpt()), nil
 	}
 
 	var ipcLabel []string
@@ -181,7 +189,7 @@ func (daemon *Daemon) generateSecurityOpt(hostConfig *containertypes.HostConfig)
 		}
 		ipcLabel = label.DupSecOpt(c.ProcessLabel)
 		if pidContainer == "" {
-			return ipcLabel, err
+			return toHostConfigSelinuxLabels(ipcLabel), err
 		}
 	}
 	if pidContainer != "" {
@@ -192,7 +200,7 @@ func (daemon *Daemon) generateSecurityOpt(hostConfig *containertypes.HostConfig)
 
 		pidLabel = label.DupSecOpt(c.ProcessLabel)
 		if ipcContainer == "" {
-			return pidLabel, err
+			return toHostConfigSelinuxLabels(pidLabel), err
 		}
 	}
 
@@ -202,7 +210,7 @@ func (daemon *Daemon) generateSecurityOpt(hostConfig *containertypes.HostConfig)
 				return nil, fmt.Errorf("--ipc and --pid containers SELinux labels aren't the same")
 			}
 		}
-		return pidLabel, nil
+		return toHostConfigSelinuxLabels(pidLabel), nil
 	}
 	return nil, nil
 }

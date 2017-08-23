@@ -6,6 +6,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -18,7 +19,7 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	containerd "github.com/docker/containerd/api/grpc/types"
+	containerd "github.com/containerd/containerd/api/grpc/types"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
@@ -106,11 +107,26 @@ type Daemon struct {
 	defaultIsolation          containertypes.Isolation // Default isolation mode on Windows
 	clusterProvider           cluster.Provider
 	cluster                   Cluster
+	metricsPluginListener     net.Listener
 
 	machineMemory uint64
 
 	seccompProfile     []byte
 	seccompProfilePath string
+
+	diskUsageRunning int32
+	pruneRunning     int32
+	hosts            map[string]bool // hosts stores the addresses the daemon is listening on
+}
+
+// StoreHosts stores the addresses the daemon is listening on
+func (daemon *Daemon) StoreHosts(hosts []string) {
+	if daemon.hosts == nil {
+		daemon.hosts = make(map[string]bool)
+	}
+	for _, h := range hosts {
+		daemon.hosts[h] = true
+	}
 }
 
 // HasExperimental returns whether the experimental features of the daemon are enabled or not
@@ -192,10 +208,12 @@ func (daemon *Daemon) restore() error {
 		wg.Add(1)
 		go func(c *container.Container) {
 			defer wg.Done()
-			if err := backportMountSpec(c); err != nil {
-				logrus.Error("Failed to migrate old mounts to use new spec format")
+			daemon.backportMountSpec(c)
+			if err := c.ToDiskLocking(); err != nil {
+				logrus.WithError(err).WithField("container", c.ID).Error("error saving backported mountspec to disk")
 			}
 
+			daemon.setStateCounter(c)
 			if c.IsRunning() || c.IsPaused() {
 				c.RestartManager().Cancel() // manually start containers because some need to wait for swarm networking
 				if err := daemon.containerd.Restore(c.ID, c.InitializeStdio); err != nil {
@@ -213,7 +231,6 @@ func (daemon *Daemon) restore() error {
 					// The error is only logged here.
 					logrus.Warnf("Failed to mount container on getting BaseFs path %v: %v", c.ID, err)
 				} else {
-					// if mount success, then unmount it
 					if err := daemon.Unmount(c); err != nil {
 						logrus.Warnf("Failed to umount container on getting BaseFs path %v: %v", c.ID, err)
 					}
@@ -589,6 +606,12 @@ func NewDaemon(config *config.Config, registryService registry.Service, containe
 	d.PluginStore = pluginStore
 	logger.RegisterPluginGetter(d.PluginStore)
 
+	metricsSockPath, err := d.listenMetricsSock()
+	if err != nil {
+		return nil, err
+	}
+	registerMetricsPluginCallback(d.PluginStore, metricsSockPath)
+
 	// Plugin system initialization should happen before restore. Do not change order.
 	d.pluginManager, err = plugin.NewManager(plugin.ManagerConfig{
 		Root:               filepath.Join(config.Root, "plugins"),
@@ -728,13 +751,15 @@ func NewDaemon(config *config.Config, registryService registry.Service, containe
 	// FIXME: this method never returns an error
 	info, _ := d.SystemInfo()
 
-	engineVersion.WithValues(
+	engineInfo.WithValues(
 		dockerversion.Version,
 		dockerversion.GitCommit,
 		info.Architecture,
 		info.Driver,
 		info.KernelVersion,
 		info.OperatingSystem,
+		info.OSType,
+		info.ID,
 	).Set(1)
 	engineCpus.Set(float64(info.NCPU))
 	engineMemory.Set(float64(info.MemTotal))
@@ -760,7 +785,12 @@ func (daemon *Daemon) shutdownContainer(c *container.Container) error {
 		if err := daemon.containerUnpause(c); err != nil {
 			return fmt.Errorf("Failed to unpause container %s with error: %v", c.ID, err)
 		}
-		if _, err := c.WaitStop(time.Duration(stopTimeout) * time.Second); err != nil {
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(stopTimeout)*time.Second)
+		defer cancel()
+
+		// Wait with timeout for container to exit.
+		if status := <-c.Wait(ctx, container.WaitConditionNotRunning); status.Err() != nil {
 			logrus.Debugf("container %s failed to exit in %d second of SIGTERM, sending SIGKILL to force", c.ID, stopTimeout)
 			sig, ok := signal.SignalMap["KILL"]
 			if !ok {
@@ -769,8 +799,10 @@ func (daemon *Daemon) shutdownContainer(c *container.Container) error {
 			if err := daemon.kill(c, int(sig)); err != nil {
 				logrus.Errorf("Failed to SIGKILL container %s", c.ID)
 			}
-			c.WaitStop(-1 * time.Second)
-			return err
+			// Wait for exit again without a timeout.
+			// Explicitly ignore the result.
+			_ = <-c.Wait(context.Background(), container.WaitConditionNotRunning)
+			return status.Err()
 		}
 	}
 	// If container failed to exit in stopTimeout seconds of SIGTERM, then using the force
@@ -778,7 +810,9 @@ func (daemon *Daemon) shutdownContainer(c *container.Container) error {
 		return fmt.Errorf("Failed to stop container %s with error: %v", c.ID, err)
 	}
 
-	c.WaitStop(-1 * time.Second)
+	// Wait without timeout for the container to exit.
+	// Ignore the result.
+	_ = <-c.Wait(context.Background(), container.WaitConditionNotRunning)
 	return nil
 }
 
@@ -815,6 +849,8 @@ func (daemon *Daemon) Shutdown() error {
 	if daemon.configStore.LiveRestoreEnabled && daemon.containers != nil {
 		// check if there are any running containers, if none we should do some cleanup
 		if ls, err := daemon.Containers(&types.ContainerListOptions{}); len(ls) != 0 || err != nil {
+			// metrics plugins still need some cleanup
+			daemon.cleanupMetricsPlugins()
 			return nil
 		}
 	}
@@ -854,6 +890,8 @@ func (daemon *Daemon) Shutdown() error {
 		logrus.Debugf("start clean shutdown of cluster resources...")
 		daemon.DaemonLeavesCluster()
 	}
+
+	daemon.cleanupMetricsPlugins()
 
 	// Shutdown plugins after containers and layerstore. Don't change the order.
 	daemon.pluginShutdown()
@@ -955,7 +993,7 @@ func prepareTempDir(rootDir string, rootUID, rootGID int) (string, error) {
 	if tmpDir = os.Getenv("DOCKER_TMPDIR"); tmpDir == "" {
 		tmpDir = filepath.Join(rootDir, "tmp")
 		newName := tmpDir + "-old"
-		if err := os.Rename(tmpDir, newName); err != nil {
+		if err := os.Rename(tmpDir, newName); err == nil {
 			go func() {
 				if err := os.RemoveAll(newName); err != nil {
 					logrus.Warnf("failed to delete old tmp directory: %s", newName)

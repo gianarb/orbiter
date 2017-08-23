@@ -127,6 +127,15 @@ func (n *networkRouter) getNetwork(ctx context.Context, w http.ResponseWriter, r
 		}
 	}
 
+	nwk, err := n.cluster.GetNetwork(term)
+	if err == nil {
+		// If the get network is passed with a specific network ID / partial network ID
+		// return the network.
+		if strings.HasPrefix(nwk.ID, term) {
+			return httputils.WriteJSON(w, http.StatusOK, nwk)
+		}
+	}
+
 	nr, _ := n.cluster.GetNetworks()
 	for _, network := range nr {
 		if network.ID == term {
@@ -283,13 +292,6 @@ func (n *networkRouter) buildNetworkResource(nw libnetwork.Network) *types.Netwo
 	r.ID = nw.ID()
 	r.Created = info.Created()
 	r.Scope = info.Scope()
-	if n.cluster.IsManager() {
-		if _, err := n.cluster.GetNetwork(nw.ID()); err == nil {
-			r.Scope = "swarm"
-		}
-	} else if info.Dynamic() {
-		r.Scope = "swarm"
-	}
 	r.Driver = nw.Type()
 	r.EnableIPv6 = info.IPv6Enabled()
 	r.Internal = info.Internal()
@@ -299,6 +301,11 @@ func (n *networkRouter) buildNetworkResource(nw libnetwork.Network) *types.Netwo
 	r.Containers = make(map[string]types.EndpointResource)
 	buildIpamResources(r, info)
 	r.Labels = info.Labels()
+	r.ConfigOnly = info.ConfigOnly()
+
+	if cn := info.ConfigFrom(); cn != "" {
+		r.ConfigFrom = network.ConfigReference{Network: cn}
+	}
 
 	peers := info.Peers()
 	if len(peers) != 0 {
@@ -391,7 +398,9 @@ func buildIpamResources(r *types.NetworkResource, nwInfo libnetwork.NetworkInfo)
 		for _, ip4Info := range ipv4Info {
 			iData := network.IPAMConfig{}
 			iData.Subnet = ip4Info.IPAMData.Pool.String()
-			iData.Gateway = ip4Info.IPAMData.Gateway.IP.String()
+			if ip4Info.IPAMData.Gateway != nil {
+				iData.Gateway = ip4Info.IPAMData.Gateway.IP.String()
+			}
 			r.IPAM.Config = append(r.IPAM.Config, iData)
 		}
 	}
@@ -412,6 +421,9 @@ func buildIpamResources(r *types.NetworkResource, nwInfo libnetwork.NetworkInfo)
 
 	if !hasIpv6Conf {
 		for _, ip6Info := range ipv6Info {
+			if ip6Info.IPAMData.Pool == nil {
+				continue
+			}
 			iData := network.IPAMConfig{}
 			iData.Subnet = ip6Info.IPAMData.Pool.String()
 			iData.Gateway = ip6Info.IPAMData.Gateway.String()
@@ -455,7 +467,7 @@ func (n *networkRouter) postNetworksPrune(ctx context.Context, w http.ResponseWr
 		return err
 	}
 
-	pruneReport, err := n.backend.NetworksPrune(pruneFilters)
+	pruneReport, err := n.backend.NetworksPrune(ctx, pruneFilters)
 	if err != nil {
 		return err
 	}

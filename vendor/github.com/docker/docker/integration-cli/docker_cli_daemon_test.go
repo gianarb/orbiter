@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,9 +22,17 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/tls"
+	"crypto/x509"
+
+	"github.com/cloudflare/cfssl/helpers"
+	"github.com/docker/docker/api"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/integration-cli/checker"
 	"github.com/docker/docker/integration-cli/cli"
 	"github.com/docker/docker/integration-cli/daemon"
+	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/testutil"
@@ -88,8 +97,8 @@ func (s *DockerDaemonSuite) TestDaemonRestartWithVolumesRefs(c *check.C) {
 
 	s.d.Restart(c)
 
-	if _, err := s.d.Cmd("run", "-d", "--volumes-from", "volrestarttest1", "--name", "volrestarttest2", "busybox", "top"); err != nil {
-		c.Fatal(err)
+	if out, err := s.d.Cmd("run", "-d", "--volumes-from", "volrestarttest1", "--name", "volrestarttest2", "busybox", "top"); err != nil {
+		c.Fatal(err, out)
 	}
 
 	if out, err := s.d.Cmd("rm", "-fv", "volrestarttest2"); err != nil {
@@ -532,32 +541,6 @@ func (s *DockerDaemonSuite) TestDaemonKeyGeneration(c *check.C) {
 	// Test Key ID is a valid fingerprint (e.g. QQXN:JY5W:TBXI:MK3X:GX6P:PD5D:F56N:NHCS:LVRZ:JA46:R24J:XEFF)
 	if len(kid) != 59 {
 		c.Fatalf("Bad key ID: %s", kid)
-	}
-}
-
-func (s *DockerDaemonSuite) TestDaemonKeyMigration(c *check.C) {
-	// TODO: skip or update for Windows daemon
-	os.Remove("/etc/docker/key.json")
-	k1, err := libtrust.GenerateECP256PrivateKey()
-	if err != nil {
-		c.Fatalf("Error generating private key: %s", err)
-	}
-	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".docker"), 0755); err != nil {
-		c.Fatalf("Error creating .docker directory: %s", err)
-	}
-	if err := libtrust.SaveKey(filepath.Join(os.Getenv("HOME"), ".docker", "key.json"), k1); err != nil {
-		c.Fatalf("Error saving private key: %s", err)
-	}
-
-	s.d.Start(c)
-	s.d.Stop(c)
-
-	k2, err := libtrust.LoadKeyFile("/etc/docker/key.json")
-	if err != nil {
-		c.Fatalf("Error opening key file")
-	}
-	if k1.KeyID() != k2.KeyID() {
-		c.Fatalf("Key not migrated")
 	}
 }
 
@@ -1713,7 +1696,7 @@ func (s *DockerDaemonSuite) TestDaemonStartWithoutHost(c *check.C) {
 }
 
 // FIXME(vdemeester) Use a new daemon instance instead of the Suite one
-func (s *DockerDaemonSuite) TestDaemonStartWithDefalutTLSHost(c *check.C) {
+func (s *DockerDaemonSuite) TestDaemonStartWithDefaultTLSHost(c *check.C) {
 	s.d.UseDefaultTLSHost = true
 	defer func() {
 		s.d.UseDefaultTLSHost = false
@@ -1743,6 +1726,33 @@ func (s *DockerDaemonSuite) TestDaemonStartWithDefalutTLSHost(c *check.C) {
 	if !strings.Contains(out, "Server") {
 		c.Fatalf("docker version should return information of server side")
 	}
+
+	// ensure when connecting to the server that only a single acceptable CA is requested
+	contents, err := ioutil.ReadFile("fixtures/https/ca.pem")
+	c.Assert(err, checker.IsNil)
+	rootCert, err := helpers.ParseCertificatePEM(contents)
+	c.Assert(err, checker.IsNil)
+	rootPool := x509.NewCertPool()
+	rootPool.AddCert(rootCert)
+
+	var certRequestInfo *tls.CertificateRequestInfo
+	conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", opts.DefaultHTTPHost, opts.DefaultTLSHTTPPort), &tls.Config{
+		RootCAs: rootPool,
+		GetClientCertificate: func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			certRequestInfo = cri
+			cert, err := tls.LoadX509KeyPair("fixtures/https/client-cert.pem", "fixtures/https/client-key.pem")
+			if err != nil {
+				return nil, err
+			}
+			return &cert, nil
+		},
+	})
+	c.Assert(err, checker.IsNil)
+	conn.Close()
+
+	c.Assert(certRequestInfo, checker.NotNil)
+	c.Assert(certRequestInfo.AcceptableCAs, checker.HasLen, 1)
+	c.Assert(certRequestInfo.AcceptableCAs[0], checker.DeepEquals, rootCert.RawSubject)
 }
 
 func (s *DockerDaemonSuite) TestBridgeIPIsExcludedFromAllocatorPool(c *check.C) {
@@ -2804,10 +2814,14 @@ func (s *DockerDaemonSuite) TestExecWithUserAfterLiveRestore(c *check.C) {
 	testRequires(c, DaemonIsLinux)
 	s.d.StartWithBusybox(c, "--live-restore")
 
-	out, err := s.d.Cmd("run", "-d", "--name=top", "busybox", "sh", "-c", "addgroup -S test && adduser -S -G test test -D -s /bin/sh && top")
+	out, err := s.d.Cmd("run", "-d", "--name=top", "busybox", "sh", "-c", "addgroup -S test && adduser -S -G test test -D -s /bin/sh && touch /adduser_end && top")
 	c.Assert(err, check.IsNil, check.Commentf("Output: %s", out))
 
 	s.d.WaitRun("top")
+
+	// Wait for shell command to be completed
+	_, err = s.d.Cmd("exec", "top", "sh", "-c", `for i in $(seq 1 5); do if [ -e /adduser_end ]; then rm -f /adduser_end && break; else sleep 1 && false; fi; done`)
+	c.Assert(err, check.IsNil, check.Commentf("Timeout waiting for shell command to be completed"))
 
 	out1, err := s.d.Cmd("exec", "-u", "test", "top", "id")
 	// uid=100(test) gid=101(test) groups=101(test)
@@ -2969,4 +2983,46 @@ func (s *DockerDaemonSuite) TestShmSizeReload(c *check.C) {
 	out, err = s.d.Cmd("inspect", "--format", "{{.HostConfig.ShmSize}}", name)
 	c.Assert(err, check.IsNil, check.Commentf("Output: %s", out))
 	c.Assert(strings.TrimSpace(out), check.Equals, fmt.Sprintf("%v", size))
+}
+
+// TestFailedPluginRemove makes sure that a failed plugin remove does not block
+// the daemon from starting
+func (s *DockerDaemonSuite) TestFailedPluginRemove(c *check.C) {
+	testRequires(c, DaemonIsLinux, IsAmd64, SameHostDaemon)
+	d := daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{})
+	d.Start(c)
+	cli, err := client.NewClient(d.Sock(), api.DefaultVersion, nil, nil)
+	c.Assert(err, checker.IsNil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	name := "test-plugin-rm-fail"
+	out, err := cli.PluginInstall(ctx, name, types.PluginInstallOptions{
+		Disabled:             true,
+		AcceptAllPermissions: true,
+		RemoteRef:            "cpuguy83/docker-logdriver-test",
+	})
+	c.Assert(err, checker.IsNil)
+	defer out.Close()
+	io.Copy(ioutil.Discard, out)
+
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	p, _, err := cli.PluginInspectWithRaw(ctx, name)
+	c.Assert(err, checker.IsNil)
+
+	// simulate a bad/partial removal by removing the plugin config.
+	configPath := filepath.Join(d.Root, "plugins", p.ID, "config.json")
+	c.Assert(os.Remove(configPath), checker.IsNil)
+
+	d.Restart(c)
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = cli.Ping(ctx)
+	c.Assert(err, checker.IsNil)
+
+	_, _, err = cli.PluginInspectWithRaw(ctx, name)
+	// plugin should be gone since the config.json is gone
+	c.Assert(err, checker.NotNil)
 }

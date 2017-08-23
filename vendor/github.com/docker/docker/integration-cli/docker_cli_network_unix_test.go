@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/versions/v1p20"
 	"github.com/docker/docker/integration-cli/checker"
+	"github.com/docker/docker/integration-cli/cli"
 	"github.com/docker/docker/integration-cli/daemon"
 	"github.com/docker/docker/pkg/stringid"
 	icmd "github.com/docker/docker/pkg/testutil/cmd"
@@ -333,7 +334,7 @@ func (s *DockerNetworkSuite) TestDockerNetworkCreateHostBind(c *check.C) {
 	dockerCmd(c, "network", "create", "--subnet=192.168.10.0/24", "--gateway=192.168.10.1", "-o", "com.docker.network.bridge.host_binding_ipv4=192.168.10.1", "testbind")
 	assertNwIsAvailable(c, "testbind")
 
-	out, _ := runSleepingContainer(c, "--net=testbind", "-p", "5000:5000")
+	out := runSleepingContainer(c, "--net=testbind", "-p", "5000:5000")
 	id := strings.TrimSpace(out)
 	c.Assert(waitRun(id), checker.IsNil)
 	out, _ = dockerCmd(c, "ps")
@@ -687,6 +688,21 @@ func (s *DockerNetworkSuite) TestDockerNetworkIPAMOptions(c *check.C) {
 	opts := nr.IPAM.Options
 	c.Assert(opts["opt1"], checker.Equals, "drv1")
 	c.Assert(opts["opt2"], checker.Equals, "drv2")
+}
+
+func (s *DockerNetworkSuite) TestDockerNetworkNullIPAMDriver(c *check.C) {
+	// Create a network with null ipam driver
+	_, _, err := dockerCmdWithError("network", "create", "-d", dummyNetworkDriver, "--ipam-driver", "null", "test000")
+	c.Assert(err, check.IsNil)
+	assertNwIsAvailable(c, "test000")
+
+	// Verify the inspect data contains the default subnet provided by the null
+	// ipam driver and no gateway, as the null ipam driver does not provide one
+	nr := getNetworkResource(c, "test000")
+	c.Assert(nr.IPAM.Driver, checker.Equals, "null")
+	c.Assert(len(nr.IPAM.Config), checker.Equals, 1)
+	c.Assert(nr.IPAM.Config[0].Subnet, checker.Equals, "0.0.0.0/0")
+	c.Assert(nr.IPAM.Config[0].Gateway, checker.Equals, "")
 }
 
 func (s *DockerNetworkSuite) TestDockerNetworkInspectDefault(c *check.C) {
@@ -1797,18 +1813,16 @@ func (s *DockerNetworkSuite) TestConntrackFlowsLeak(c *check.C) {
 	testRequires(c, IsAmd64, DaemonIsLinux, Network)
 
 	// Create a new network
-	dockerCmd(c, "network", "create", "--subnet=192.168.10.0/24", "--gateway=192.168.10.1", "-o", "com.docker.network.bridge.host_binding_ipv4=192.168.10.1", "testbind")
+	cli.DockerCmd(c, "network", "create", "--subnet=192.168.10.0/24", "--gateway=192.168.10.1", "-o", "com.docker.network.bridge.host_binding_ipv4=192.168.10.1", "testbind")
 	assertNwIsAvailable(c, "testbind")
 
 	// Launch the server, this will remain listening on an exposed port and reply to any request in a ping/pong fashion
 	cmd := "while true; do echo hello | nc -w 1 -lu 8080; done"
-	_, _, err := dockerCmdWithError("run", "-d", "--name", "server", "--net", "testbind", "-p", "8080:8080/udp", "appropriate/nc", "sh", "-c", cmd)
-	c.Assert(err, check.IsNil)
+	cli.DockerCmd(c, "run", "-d", "--name", "server", "--net", "testbind", "-p", "8080:8080/udp", "appropriate/nc", "sh", "-c", cmd)
 
 	// Launch a container client, here the objective is to create a flow that is natted in order to expose the bug
 	cmd = "echo world | nc -q 1 -u 192.168.10.1 8080"
-	_, _, err = dockerCmdWithError("run", "-d", "--name", "client", "--net=host", "appropriate/nc", "sh", "-c", cmd)
-	c.Assert(err, check.IsNil)
+	cli.DockerCmd(c, "run", "-d", "--name", "client", "--net=host", "appropriate/nc", "sh", "-c", cmd)
 
 	// Get all the flows using netlink
 	flows, err := netlink.ConntrackTableList(netlink.ConntrackTable, syscall.AF_INET)
@@ -1826,8 +1840,7 @@ func (s *DockerNetworkSuite) TestConntrackFlowsLeak(c *check.C) {
 	c.Assert(flowMatch, checker.Equals, 1)
 
 	// Now delete the server, this will trigger the conntrack cleanup
-	err = deleteContainer("server")
-	c.Assert(err, checker.IsNil)
+	cli.DockerCmd(c, "rm", "-fv", "server")
 
 	// Fetch again all the flows and validate that there is no server flow in the conntrack laying around
 	flows, err = netlink.ConntrackTableList(netlink.ConntrackTable, syscall.AF_INET)
