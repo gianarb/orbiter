@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/docker/distribution/digest"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/layer"
+	"github.com/opencontainers/go-digest"
 )
 
 // V2MetadataService maps layer IDs to a set of known metadata for
@@ -38,7 +38,7 @@ type V2Metadata struct {
 	HMAC string
 }
 
-// CheckV2MetadataHMAC return true if the given "meta" is tagged with a hmac hashed by the given "key".
+// CheckV2MetadataHMAC returns true if the given "meta" is tagged with a hmac hashed by the given "key".
 func CheckV2MetadataHMAC(meta *V2Metadata, key []byte) bool {
 	if len(meta.HMAC) == 0 || len(key) == 0 {
 		return len(meta.HMAC) == 0 && len(key) == 0

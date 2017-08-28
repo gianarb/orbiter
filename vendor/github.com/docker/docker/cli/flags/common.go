@@ -6,22 +6,20 @@ import (
 	"path/filepath"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/docker/docker/cliconfig"
+	"github.com/docker/docker/cli"
 	"github.com/docker/docker/opts"
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/spf13/pflag"
 )
 
 const (
-	// DefaultTrustKeyFile is the default filename for the trust key
-	DefaultTrustKeyFile = "key.json"
 	// DefaultCaFile is the default filename for the CA pem file
 	DefaultCaFile = "ca.pem"
 	// DefaultKeyFile is the default filename for the key pem file
 	DefaultKeyFile = "key.pem"
 	// DefaultCertFile is the default filename for the cert pem file
 	DefaultCertFile = "cert.pem"
-	// FlagTLSVerify is the flag name for the tls verification option
+	// FlagTLSVerify is the flag name for the TLS verification option
 	FlagTLSVerify = "tlsverify"
 )
 
@@ -38,7 +36,6 @@ type CommonOptions struct {
 	TLS        bool
 	TLSVerify  bool
 	TLSOptions *tlsconfig.Options
-	TrustKey   string
 }
 
 // NewCommonOptions returns a new CommonOptions
@@ -49,11 +46,11 @@ func NewCommonOptions() *CommonOptions {
 // InstallFlags adds flags for the common options on the FlagSet
 func (commonOpts *CommonOptions) InstallFlags(flags *pflag.FlagSet) {
 	if dockerCertPath == "" {
-		dockerCertPath = cliconfig.ConfigDir()
+		dockerCertPath = cli.ConfigurationDir()
 	}
 
 	flags.BoolVarP(&commonOpts.Debug, "debug", "D", false, "Enable debug mode")
-	flags.StringVarP(&commonOpts.LogLevel, "log-level", "l", "info", "Set the logging level (\"debug\", \"info\", \"warn\", \"error\", \"fatal\")")
+	flags.StringVarP(&commonOpts.LogLevel, "log-level", "l", "info", `Set the logging level ("debug"|"info"|"warn"|"error"|"fatal")`)
 	flags.BoolVar(&commonOpts.TLS, "tls", false, "Use TLS; implied by --tlsverify")
 	flags.BoolVar(&commonOpts.TLSVerify, FlagTLSVerify, dockerTLSVerify, "Use TLS and verify the remote")
 
@@ -77,7 +74,7 @@ func (commonOpts *CommonOptions) InstallFlags(flags *pflag.FlagSet) {
 // complete
 func (commonOpts *CommonOptions) SetDefaultOptions(flags *pflag.FlagSet) {
 	// Regardless of whether the user sets it to true or false, if they
-	// specify --tlsverify at all then we need to turn on tls
+	// specify --tlsverify at all then we need to turn on TLS
 	// TLSVerify can be true even if not set due to DOCKER_TLS_VERIFY env var, so we need
 	// to check that here as well
 	if flags.Changed(FlagTLSVerify) || commonOpts.TLSVerify {

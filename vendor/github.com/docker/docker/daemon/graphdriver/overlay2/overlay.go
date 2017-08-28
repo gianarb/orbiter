@@ -27,12 +27,14 @@ import (
 	"github.com/docker/docker/pkg/directory"
 	"github.com/docker/docker/pkg/fsutils"
 	"github.com/docker/docker/pkg/idtools"
+	"github.com/docker/docker/pkg/locker"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/parsers/kernel"
-	"github.com/docker/go-units"
+	"github.com/docker/docker/pkg/system"
+	units "github.com/docker/go-units"
 
-	"github.com/opencontainers/runc/libcontainer/label"
+	"github.com/opencontainers/selinux/go-selinux/label"
 )
 
 var (
@@ -98,6 +100,7 @@ type Driver struct {
 	options       overlayOptions
 	naiveDiff     graphdriver.DiffDriver
 	supportsDType bool
+	locker        *locker.Locker
 }
 
 var (
@@ -147,9 +150,19 @@ func Init(home string, options []string, uidMaps, gidMaps []idtools.IDMap) (grap
 
 	// check if they are running over btrfs, aufs, zfs, overlay, or ecryptfs
 	switch fsMagic {
-	case graphdriver.FsMagicBtrfs, graphdriver.FsMagicAufs, graphdriver.FsMagicZfs, graphdriver.FsMagicOverlay, graphdriver.FsMagicEcryptfs:
+	case graphdriver.FsMagicAufs, graphdriver.FsMagicZfs, graphdriver.FsMagicOverlay, graphdriver.FsMagicEcryptfs:
 		logrus.Errorf("'overlay2' is not supported over %s", backingFs)
 		return nil, graphdriver.ErrIncompatibleFS
+	case graphdriver.FsMagicBtrfs:
+		// Support for OverlayFS on BTRFS was added in kernel 4.7
+		// See https://btrfs.wiki.kernel.org/index.php/Changelog
+		if kernel.CompareKernelVersion(*v, kernel.VersionInfo{Kernel: 4, Major: 7, Minor: 0}) < 0 {
+			if !opts.overrideKernelCheck {
+				logrus.Errorf("'overlay2' requires kernel 4.7 to use on %s", backingFs)
+				return nil, graphdriver.ErrIncompatibleFS
+			}
+			logrus.Warn("Using pre-4.7.0 kernel for overlay2 on btrfs, may require kernel update")
+		}
 	}
 
 	rootUID, rootGID, err := idtools.GetRootUIDGID(uidMaps, gidMaps)
@@ -170,7 +183,7 @@ func Init(home string, options []string, uidMaps, gidMaps []idtools.IDMap) (grap
 		return nil, err
 	}
 	if !supportsDType {
-		// not a fatal error until v1.16 (#27443)
+		// not a fatal error until v17.12 (#27443)
 		logrus.Warn(overlayutils.ErrDTypeNotSupported("overlay2", backingFs))
 	}
 
@@ -180,6 +193,7 @@ func Init(home string, options []string, uidMaps, gidMaps []idtools.IDMap) (grap
 		gidMaps:       gidMaps,
 		ctr:           graphdriver.NewRefCounter(graphdriver.NewFsChecker(graphdriver.FsMagicOverlay)),
 		supportsDType: supportsDType,
+		locker:        locker.New(),
 	}
 
 	d.naiveDiff = graphdriver.NewNaiveDiffDriver(d, uidMaps, gidMaps)
@@ -451,6 +465,8 @@ func (d *Driver) getLowerDirs(id string) ([]string, error) {
 
 // Remove cleans the directories that are created for this id.
 func (d *Driver) Remove(id string) error {
+	d.locker.Lock(id)
+	defer d.locker.Unlock(id)
 	dir := d.dir(id)
 	lid, err := ioutil.ReadFile(path.Join(dir, "link"))
 	if err == nil {
@@ -459,7 +475,7 @@ func (d *Driver) Remove(id string) error {
 		}
 	}
 
-	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+	if err := system.EnsureRemoveAll(dir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -467,6 +483,8 @@ func (d *Driver) Remove(id string) error {
 
 // Get creates and mounts the required file system for the given id and returns the mount path.
 func (d *Driver) Get(id string, mountLabel string) (s string, err error) {
+	d.locker.Lock(id)
+	defer d.locker.Unlock(id)
 	dir := d.dir(id)
 	if _, err := os.Stat(dir); err != nil {
 		return "", err
@@ -553,7 +571,19 @@ func (d *Driver) Get(id string, mountLabel string) (s string, err error) {
 
 // Put unmounts the mount path created for the give id.
 func (d *Driver) Put(id string) error {
-	mountpoint := path.Join(d.dir(id), "merged")
+	d.locker.Lock(id)
+	defer d.locker.Unlock(id)
+	dir := d.dir(id)
+	_, err := ioutil.ReadFile(path.Join(dir, lowerFile))
+	if err != nil {
+		// If no lower, no mount happened and just return directly
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	mountpoint := path.Join(dir, "merged")
 	if count := d.ctr.Decrement(mountpoint); count > 0 {
 		return nil
 	}

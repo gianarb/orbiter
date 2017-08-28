@@ -11,12 +11,12 @@ import (
 )
 
 func TestMemBytesString(t *testing.T) {
-	var mem memBytes = 1048576
-	assert.Equal(t, mem.String(), "1 MiB")
+	var mem opts.MemBytes = 1048576
+	assert.Equal(t, mem.String(), "1MiB")
 }
 
 func TestMemBytesSetAndValue(t *testing.T) {
-	var mem memBytes
+	var mem opts.MemBytes
 	assert.NilError(t, mem.Set("5kb"))
 	assert.Equal(t, mem.Value(), int64(5120))
 }
@@ -71,18 +71,20 @@ func TestUint64OptSetAndValue(t *testing.T) {
 func TestHealthCheckOptionsToHealthConfig(t *testing.T) {
 	dur := time.Second
 	opt := healthCheckOptions{
-		cmd:      "curl",
-		interval: PositiveDurationOpt{DurationOpt{value: &dur}},
-		timeout:  PositiveDurationOpt{DurationOpt{value: &dur}},
-		retries:  10,
+		cmd:         "curl",
+		interval:    PositiveDurationOpt{DurationOpt{value: &dur}},
+		timeout:     PositiveDurationOpt{DurationOpt{value: &dur}},
+		startPeriod: PositiveDurationOpt{DurationOpt{value: &dur}},
+		retries:     10,
 	}
 	config, err := opt.toHealthConfig()
 	assert.NilError(t, err)
 	assert.Equal(t, reflect.DeepEqual(config, &container.HealthConfig{
-		Test:     []string{"CMD-SHELL", "curl"},
-		Interval: time.Second,
-		Timeout:  time.Second,
-		Retries:  10,
+		Test:        []string{"CMD-SHELL", "curl"},
+		Interval:    time.Second,
+		Timeout:     time.Second,
+		StartPeriod: time.Second,
+		Retries:     10,
 	}), true)
 }
 

@@ -54,17 +54,17 @@ func init() {
 }
 
 // New creates a new etwLogs logger for the given container and registers the EWT provider.
-func New(ctx logger.Context) (logger.Logger, error) {
+func New(info logger.Info) (logger.Logger, error) {
 	if err := registerETWProvider(); err != nil {
 		return nil, err
 	}
-	logrus.Debugf("logging driver etwLogs configured for container: %s.", ctx.ContainerID)
+	logrus.Debugf("logging driver etwLogs configured for container: %s.", info.ContainerID)
 
 	return &etwLogs{
-		containerName: fixContainerName(ctx.ContainerName),
-		imageName:     ctx.ContainerImageName,
-		containerID:   ctx.ContainerID,
-		imageID:       ctx.ContainerImageID,
+		containerName: info.Name(),
+		imageName:     info.ContainerImageName,
+		containerID:   info.ContainerID,
+		imageID:       info.ContainerImageID,
 	}, nil
 }
 
@@ -76,7 +76,9 @@ func (etwLogger *etwLogs) Log(msg *logger.Message) error {
 		logrus.Error(errorMessage)
 		return errors.New(errorMessage)
 	}
-	return callEventWriteString(createLogMessage(etwLogger, msg))
+	m := createLogMessage(etwLogger, msg)
+	logger.PutMessage(msg)
+	return callEventWriteString(m)
 }
 
 // Close closes the logger by unregistering the ETW provider.
@@ -97,14 +99,6 @@ func createLogMessage(etwLogger *etwLogs, msg *logger.Message) string {
 		etwLogger.imageID,
 		msg.Source,
 		msg.Line)
-}
-
-// fixContainerName removes the initial '/' from the container name.
-func fixContainerName(cntName string) string {
-	if len(cntName) > 0 && cntName[0] == '/' {
-		cntName = cntName[1:]
-	}
-	return cntName
 }
 
 func registerETWProvider() error {
@@ -138,8 +132,10 @@ func unregisterETWProvider() {
 func callEventRegister() error {
 	// The provider's GUID is {a3693192-9ed6-46d2-a981-f8226c8363bd}
 	guid := syscall.GUID{
-		0xa3693192, 0x9ed6, 0x46d2,
-		[8]byte{0xa9, 0x81, 0xf8, 0x22, 0x6c, 0x83, 0x63, 0xbd},
+		Data1: 0xa3693192,
+		Data2: 0x9ed6,
+		Data3: 0x46d2,
+		Data4: [8]byte{0xa9, 0x81, 0xf8, 0x22, 0x6c, 0x83, 0x63, 0xbd},
 	}
 
 	ret, _, _ := procEventRegister.Call(uintptr(unsafe.Pointer(&guid)), 0, 0, uintptr(unsafe.Pointer(&providerHandle)))
@@ -152,7 +148,13 @@ func callEventRegister() error {
 }
 
 func callEventWriteString(message string) error {
-	ret, _, _ := procEventWriteString.Call(uintptr(providerHandle), 0, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(message))))
+	utf16message, err := syscall.UTF16FromString(message)
+
+	if err != nil {
+		return err
+	}
+
+	ret, _, _ := procEventWriteString.Call(uintptr(providerHandle), 0, 0, uintptr(unsafe.Pointer(&utf16message[0])))
 	if ret != win32CallSuccess {
 		errorMessage := fmt.Sprintf("ETWLogs provider failed to log message. Error: %d", ret)
 		logrus.Error(errorMessage)
@@ -163,8 +165,5 @@ func callEventWriteString(message string) error {
 
 func callEventUnregister() bool {
 	ret, _, _ := procEventUnregister.Call(uintptr(providerHandle))
-	if ret != win32CallSuccess {
-		return false
-	}
-	return true
+	return ret == win32CallSuccess
 }

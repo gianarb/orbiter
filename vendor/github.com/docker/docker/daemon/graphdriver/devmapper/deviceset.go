@@ -5,7 +5,6 @@ package devmapper
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,9 +28,10 @@ import (
 	"github.com/docker/docker/pkg/loopback"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/parsers"
-	"github.com/docker/go-units"
+	units "github.com/docker/go-units"
+	"github.com/pkg/errors"
 
-	"github.com/opencontainers/runc/libcontainer/label"
+	"github.com/opencontainers/selinux/go-selinux/label"
 )
 
 var (
@@ -50,6 +51,7 @@ var (
 	enableDeferredDeletion              = false
 	userBaseSize                        = false
 	defaultMinFreeSpacePercent   uint32 = 10
+	lvmSetupConfigForce          bool
 )
 
 const deviceSetMetaFile string = "deviceset-metadata"
@@ -123,6 +125,7 @@ type DeviceSet struct {
 	gidMaps               []idtools.IDMap
 	minFreeSpacePercent   uint32 //min free space percentage in thinpool
 	xfsNospaceRetries     string // max retries when xfs receives ENOSPC
+	lvmSetupConfig        directLVMConfig
 }
 
 // DiskUsage contains information about disk usage and is used when reporting Status of a device.
@@ -380,10 +383,7 @@ func (devices *DeviceSet) isDeviceIDFree(deviceID int) bool {
 	var mask byte
 	i := deviceID % 8
 	mask = (1 << uint(i))
-	if (devices.deviceIDMap[deviceID/8] & mask) != 0 {
-		return false
-	}
-	return true
+	return (devices.deviceIDMap[deviceID/8] & mask) == 0
 }
 
 // Should be called with devices.Lock() held.
@@ -480,11 +480,10 @@ func (devices *DeviceSet) loadDeviceFilesOnStart() error {
 }
 
 // Should be called with devices.Lock() held.
-func (devices *DeviceSet) unregisterDevice(id int, hash string) error {
-	logrus.Debugf("devmapper: unregisterDevice(%v, %v)", id, hash)
+func (devices *DeviceSet) unregisterDevice(hash string) error {
+	logrus.Debugf("devmapper: unregisterDevice(%v)", hash)
 	info := &devInfo{
-		Hash:     hash,
-		DeviceID: id,
+		Hash: hash,
 	}
 
 	delete(devices.Devices, hash)
@@ -832,7 +831,7 @@ func (devices *DeviceSet) createRegisterDevice(hash string) (*devInfo, error) {
 	}
 
 	if err := devices.closeTransaction(); err != nil {
-		devices.unregisterDevice(deviceID, hash)
+		devices.unregisterDevice(hash)
 		devicemapper.DeleteDevice(devices.getPoolDevName(), deviceID)
 		devices.markDeviceIDFree(deviceID)
 		return nil, err
@@ -862,6 +861,7 @@ func (devices *DeviceSet) takeSnapshot(hash string, baseInfo *devInfo, size uint
 				if err != devicemapper.ErrEnxio {
 					return err
 				}
+				devinfo = nil
 			} else {
 				defer devices.deactivateDevice(baseInfo)
 			}
@@ -932,7 +932,7 @@ func (devices *DeviceSet) createRegisterSnapDevice(hash string, baseInfo *devInf
 	}
 
 	if err := devices.closeTransaction(); err != nil {
-		devices.unregisterDevice(deviceID, hash)
+		devices.unregisterDevice(hash)
 		devicemapper.DeleteDevice(devices.getPoolDevName(), deviceID)
 		devices.markDeviceIDFree(deviceID)
 		return err
@@ -1400,10 +1400,7 @@ func (devices *DeviceSet) saveTransactionMetaData() error {
 }
 
 func (devices *DeviceSet) removeTransactionMetaData() error {
-	if err := os.RemoveAll(devices.transactionMetaFile()); err != nil {
-		return err
-	}
-	return nil
+	return os.RemoveAll(devices.transactionMetaFile())
 }
 
 func (devices *DeviceSet) rollbackTransaction() error {
@@ -1713,9 +1710,9 @@ func (devices *DeviceSet) initDevmapper(doInit bool) error {
 	// https://github.com/docker/docker/issues/4036
 	if supported := devicemapper.UdevSetSyncSupport(true); !supported {
 		if dockerversion.IAmStatic == "true" {
-			logrus.Error("devmapper: Udev sync is not supported. This will lead to data loss and unexpected behavior. Install a dynamic binary to use devicemapper or select a different storage driver. For more information, see https://docs.docker.com/engine/reference/commandline/daemon/#daemon-storage-driver-option")
+			logrus.Error("devmapper: Udev sync is not supported. This will lead to data loss and unexpected behavior. Install a dynamic binary to use devicemapper or select a different storage driver. For more information, see https://docs.docker.com/engine/reference/commandline/dockerd/#storage-driver-options")
 		} else {
-			logrus.Error("devmapper: Udev sync is not supported. This will lead to data loss and unexpected behavior. Install a more recent version of libdevmapper or select a different storage driver. For more information, see https://docs.docker.com/engine/reference/commandline/daemon/#daemon-storage-driver-option")
+			logrus.Error("devmapper: Udev sync is not supported. This will lead to data loss and unexpected behavior. Install a more recent version of libdevmapper or select a different storage driver. For more information, see https://docs.docker.com/engine/reference/commandline/dockerd/#storage-driver-options")
 		}
 
 		if !devices.overrideUdevSyncCheck {
@@ -1736,8 +1733,36 @@ func (devices *DeviceSet) initDevmapper(doInit bool) error {
 		return err
 	}
 
-	// Set the device prefix from the device id and inode of the docker root dir
+	prevSetupConfig, err := readLVMConfig(devices.root)
+	if err != nil {
+		return err
+	}
 
+	if !reflect.DeepEqual(devices.lvmSetupConfig, directLVMConfig{}) {
+		if devices.thinPoolDevice != "" {
+			return errors.New("cannot setup direct-lvm when `dm.thinpooldev` is also specified")
+		}
+
+		if !reflect.DeepEqual(prevSetupConfig, devices.lvmSetupConfig) {
+			if !reflect.DeepEqual(prevSetupConfig, directLVMConfig{}) {
+				return errors.New("changing direct-lvm config is not supported")
+			}
+			logrus.WithField("storage-driver", "devicemapper").WithField("direct-lvm-config", devices.lvmSetupConfig).Debugf("Setting up direct lvm mode")
+			if err := verifyBlockDevice(devices.lvmSetupConfig.Device, lvmSetupConfigForce); err != nil {
+				return err
+			}
+			if err := setupDirectLVM(devices.lvmSetupConfig); err != nil {
+				return err
+			}
+			if err := writeLVMConfig(devices.root, devices.lvmSetupConfig); err != nil {
+				return err
+			}
+		}
+		devices.thinPoolDevice = "docker-thinpool"
+		logrus.WithField("storage-driver", "devicemapper").Debugf("Setting dm.thinpooldev to %q", devices.thinPoolDevice)
+	}
+
+	// Set the device prefix from the device id and inode of the docker root dir
 	st, err := os.Stat(devices.root)
 	if err != nil {
 		return fmt.Errorf("devmapper: Error looking up dir %s: %s", devices.root, err)
@@ -2010,7 +2035,7 @@ func (devices *DeviceSet) deleteTransaction(info *devInfo, syncDelete bool) erro
 	}
 
 	if err == nil {
-		if err := devices.unregisterDevice(info.DeviceID, info.Hash); err != nil {
+		if err := devices.unregisterDevice(info.Hash); err != nil {
 			return err
 		}
 		// If device was already in deferred delete state that means
@@ -2408,11 +2433,7 @@ func (devices *DeviceSet) UnmountDevice(hash, mountPath string) error {
 	}
 	logrus.Debug("devmapper: Unmount done")
 
-	if err := devices.deactivateDevice(info); err != nil {
-		return err
-	}
-
-	return nil
+	return devices.deactivateDevice(info)
 }
 
 // HasDevice returns true if the device metadata exists.
@@ -2615,6 +2636,7 @@ func NewDeviceSet(root string, doInit bool, options []string, uidMaps, gidMaps [
 	}
 
 	foundBlkDiscard := false
+	var lvmSetupConfig directLVMConfig
 	for _, option := range options {
 		key, val, err := parsers.ParseKeyValueOpt(option)
 		if err != nil {
@@ -2709,10 +2731,59 @@ func NewDeviceSet(root string, doInit bool, options []string, uidMaps, gidMaps [
 				return nil, err
 			}
 			devices.xfsNospaceRetries = val
+		case "dm.directlvm_device":
+			lvmSetupConfig.Device = val
+		case "dm.directlvm_device_force":
+			lvmSetupConfigForce, err = strconv.ParseBool(val)
+			if err != nil {
+				return nil, err
+			}
+		case "dm.thinp_percent":
+			per, err := strconv.ParseUint(strings.TrimSuffix(val, "%"), 10, 32)
+			if err != nil {
+				return nil, errors.Wrapf(err, "could not parse `dm.thinp_percent=%s`", val)
+			}
+			if per >= 100 {
+				return nil, errors.New("dm.thinp_percent must be greater than 0 and less than 100")
+			}
+			lvmSetupConfig.ThinpPercent = per
+		case "dm.thinp_metapercent":
+			per, err := strconv.ParseUint(strings.TrimSuffix(val, "%"), 10, 32)
+			if err != nil {
+				return nil, errors.Wrapf(err, "could not parse `dm.thinp_metapercent=%s`", val)
+			}
+			if per >= 100 {
+				return nil, errors.New("dm.thinp_metapercent must be greater than 0 and less than 100")
+			}
+			lvmSetupConfig.ThinpMetaPercent = per
+		case "dm.thinp_autoextend_percent":
+			per, err := strconv.ParseUint(strings.TrimSuffix(val, "%"), 10, 32)
+			if err != nil {
+				return nil, errors.Wrapf(err, "could not parse `dm.thinp_autoextend_percent=%s`", val)
+			}
+			if per > 100 {
+				return nil, errors.New("dm.thinp_autoextend_percent must be greater than 0 and less than 100")
+			}
+			lvmSetupConfig.AutoExtendPercent = per
+		case "dm.thinp_autoextend_threshold":
+			per, err := strconv.ParseUint(strings.TrimSuffix(val, "%"), 10, 32)
+			if err != nil {
+				return nil, errors.Wrapf(err, "could not parse `dm.thinp_autoextend_threshold=%s`", val)
+			}
+			if per > 100 {
+				return nil, errors.New("dm.thinp_autoextend_threshold must be greater than 0 and less than 100")
+			}
+			lvmSetupConfig.AutoExtendThreshold = per
 		default:
 			return nil, fmt.Errorf("devmapper: Unknown option %s\n", key)
 		}
 	}
+
+	if err := validateLVMConfig(lvmSetupConfig); err != nil {
+		return nil, err
+	}
+
+	devices.lvmSetupConfig = lvmSetupConfig
 
 	// By default, don't do blk discard hack on raw devices, its rarely useful and is expensive
 	if !foundBlkDiscard && (devices.dataDevice != "" || devices.thinPoolDevice != "") {

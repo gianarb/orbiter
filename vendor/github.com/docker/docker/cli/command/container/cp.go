@@ -1,20 +1,19 @@
 package container
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/net/context"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/cli"
 	"github.com/docker/docker/cli/command"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/system"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/context"
 )
 
 type copyOptions struct {
@@ -53,10 +52,10 @@ func NewCopyCommand(dockerCli *command.DockerCli) *cobra.Command {
 		Args: cli.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if args[0] == "" {
-				return fmt.Errorf("source can not be empty")
+				return errors.New("source can not be empty")
 			}
 			if args[1] == "" {
-				return fmt.Errorf("destination can not be empty")
+				return errors.New("destination can not be empty")
 			}
 			opts.source = args[0]
 			opts.destination = args[1]
@@ -96,10 +95,10 @@ func runCopy(dockerCli *command.DockerCli, opts copyOptions) error {
 		return copyToContainer(ctx, dockerCli, srcPath, dstContainer, dstPath, cpParam)
 	case acrossContainers:
 		// Copying between containers isn't supported.
-		return fmt.Errorf("copying between containers is not supported")
+		return errors.New("copying between containers is not supported")
 	default:
 		// User didn't specify any container.
-		return fmt.Errorf("must specify at least one container source")
+		return errors.New("must specify at least one container source")
 	}
 }
 
@@ -227,7 +226,7 @@ func copyToContainer(ctx context.Context, dockerCli *command.DockerCli, srcPath,
 		content = os.Stdin
 		resolvedDstPath = dstInfo.Path
 		if !dstInfo.IsDir {
-			return fmt.Errorf("destination %q must be a directory", fmt.Sprintf("%s:%s", dstContainer, dstPath))
+			return errors.Errorf("destination \"%s:%s\" must be a directory", dstContainer, dstPath)
 		}
 	} else {
 		// Prepare source copy info.

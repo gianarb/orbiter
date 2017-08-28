@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"sync/atomic"
 	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/container"
+	"github.com/docker/docker/cli/debug"
+	"github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/parsers/kernel"
@@ -19,7 +19,6 @@ import (
 	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/registry"
-	"github.com/docker/docker/utils"
 	"github.com/docker/docker/volume/drivers"
 	"github.com/docker/go-connections/sockets"
 )
@@ -57,18 +56,7 @@ func (daemon *Daemon) SystemInfo() (*types.Info, error) {
 	}
 
 	sysInfo := sysinfo.New(true)
-
-	var cRunning, cPaused, cStopped int32
-	daemon.containers.ApplyAll(func(c *container.Container) {
-		switch c.StateString() {
-		case "paused":
-			atomic.AddInt32(&cPaused, 1)
-		case "running":
-			atomic.AddInt32(&cRunning, 1)
-		default:
-			atomic.AddInt32(&cStopped, 1)
-		}
-	})
+	cRunning, cPaused, cStopped := stateCtr.get()
 
 	securityOptions := []string{}
 	if sysInfo.AppArmor {
@@ -102,7 +90,7 @@ func (daemon *Daemon) SystemInfo() (*types.Info, error) {
 		IPv4Forwarding:     !sysInfo.IPv4ForwardingDisabled,
 		BridgeNfIptables:   !sysInfo.BridgeNFCallIPTablesDisabled,
 		BridgeNfIP6tables:  !sysInfo.BridgeNFCallIP6TablesDisabled,
-		Debug:              utils.IsDebugEnabled(),
+		Debug:              debug.IsEnabled(),
 		NFd:                fileutils.GetTotalUsedFds(),
 		NGoroutines:        runtime.NumGoroutine(),
 		SystemTime:         time.Now().Format(time.RFC3339Nano),
@@ -174,7 +162,10 @@ func (daemon *Daemon) showPluginsInfo() types.PluginsInfo {
 
 	pluginsInfo.Volume = volumedrivers.GetDriverList()
 	pluginsInfo.Network = daemon.GetNetworkDriverList()
+	// The authorization plugins are returned in the order they are
+	// used as they constitute a request/response modification chain.
 	pluginsInfo.Authorization = daemon.configStore.AuthorizationPlugins
+	pluginsInfo.Log = logger.ListDrivers()
 
 	return pluginsInfo
 }
