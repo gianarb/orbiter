@@ -1,3 +1,6 @@
+![](https://raw.githubusercontent.com/gianarb/orbiter/master/design/logo.png "Orbiter")
+
+
 [![Build
 Status](https://travis-ci.org/gianarb/orbiter.svg?branch=master)](https://travis-ci.org/gianarb/orbiter)
 
