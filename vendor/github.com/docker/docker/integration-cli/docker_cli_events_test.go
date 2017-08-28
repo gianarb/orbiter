@@ -14,8 +14,12 @@ import (
 
 	eventtypes "github.com/docker/docker/api/types/events"
 	eventstestutils "github.com/docker/docker/daemon/events/testutils"
-	"github.com/docker/docker/pkg/integration/checker"
-	icmd "github.com/docker/docker/pkg/integration/cmd"
+	"github.com/docker/docker/integration-cli/checker"
+	"github.com/docker/docker/integration-cli/cli"
+	"github.com/docker/docker/integration-cli/cli/build"
+	"github.com/docker/docker/integration-cli/request"
+	"github.com/docker/docker/pkg/testutil"
+	icmd "github.com/docker/docker/pkg/testutil/cmd"
 	"github.com/go-check/check"
 )
 
@@ -78,10 +82,15 @@ func (s *DockerSuite) TestEventsUntag(c *check.C) {
 }
 
 func (s *DockerSuite) TestEventsLimit(c *check.C) {
-	// Limit to 8 goroutines creating containers in order to prevent timeouts
-	// creating so many containers simultaneously on Windows
-	sem := make(chan bool, 8)
+	// Windows: Limit to 4 goroutines creating containers in order to prevent
+	// timeouts creating so many containers simultaneously. This is a due to
+	// a bug in the Windows platform. It will be fixed in a Windows Update.
 	numContainers := 17
+	numConcurrentContainers := numContainers
+	if testEnv.DaemonPlatform() == "windows" {
+		numConcurrentContainers = 4
+	}
+	sem := make(chan bool, numConcurrentContainers)
 	errChan := make(chan error, numContainers)
 
 	args := []string{"run", "--rm", "busybox", "true"}
@@ -110,7 +119,7 @@ func (s *DockerSuite) TestEventsLimit(c *check.C) {
 	out, _ := dockerCmd(c, "events", "--since=0", "--until", daemonUnixTime(c))
 	events := strings.Split(out, "\n")
 	nEvents := len(events) - 1
-	c.Assert(nEvents, checker.Equals, 64, check.Commentf("events should be limited to 64, but received %d", nEvents))
+	c.Assert(nEvents, checker.Equals, 256, check.Commentf("events should be limited to 256, but received %d", nEvents))
 }
 
 func (s *DockerSuite) TestEventsContainerEvents(c *check.C) {
@@ -221,7 +230,7 @@ func (s *DockerSuite) TestEventsImageImport(c *check.C) {
 	cleanedContainerID := strings.TrimSpace(out)
 
 	since := daemonUnixTime(c)
-	out, _, err := runCommandPipelineWithOutput(
+	out, _, err := testutil.RunCommandPipelineWithOutput(
 		exec.Command(dockerBinary, "export", cleanedContainerID),
 		exec.Command(dockerBinary, "import", "-"),
 	)
@@ -377,11 +386,9 @@ func (s *DockerSuite) TestEventsFilterImageLabels(c *check.C) {
 	label := "io.docker.testing=image"
 
 	// Build a test image.
-	_, err := buildImage(name, fmt.Sprintf(`
+	buildImageSuccessfully(c, name, build.WithDockerfile(fmt.Sprintf(`
 		FROM busybox:latest
-		LABEL %s`, label), true)
-	c.Assert(err, checker.IsNil, check.Commentf("Couldn't create image"))
-
+		LABEL %s`, label)))
 	dockerCmd(c, "tag", name, "labelfiltertest:tag1")
 	dockerCmd(c, "tag", name, "labelfiltertest:tag2")
 	dockerCmd(c, "tag", "busybox:latest", "labelfiltertest:tag3")
@@ -445,25 +452,25 @@ func (s *DockerSuite) TestEventsCommit(c *check.C) {
 	// Problematic on Windows as cannot commit a running container
 	testRequires(c, DaemonIsLinux)
 
-	out, _ := runSleepingContainer(c)
+	out := runSleepingContainer(c)
 	cID := strings.TrimSpace(out)
-	c.Assert(waitRun(cID), checker.IsNil)
+	cli.WaitRun(c, cID)
 
-	dockerCmd(c, "commit", "-m", "test", cID)
-	dockerCmd(c, "stop", cID)
-	c.Assert(waitExited(cID, 5*time.Second), checker.IsNil)
+	cli.DockerCmd(c, "commit", "-m", "test", cID)
+	cli.DockerCmd(c, "stop", cID)
+	cli.WaitExited(c, cID, 5*time.Second)
 
 	until := daemonUnixTime(c)
-	out, _ = dockerCmd(c, "events", "-f", "container="+cID, "--until="+until)
+	out = cli.DockerCmd(c, "events", "-f", "container="+cID, "--until="+until).Combined()
 	c.Assert(out, checker.Contains, "commit", check.Commentf("Missing 'commit' log event"))
 }
 
 func (s *DockerSuite) TestEventsCopy(c *check.C) {
 	// Build a test image.
-	id, err := buildImage("cpimg", `
+	buildImageSuccessfully(c, "cpimg", build.WithDockerfile(`
 		  FROM busybox
-		  RUN echo HI > /file`, true)
-	c.Assert(err, checker.IsNil, check.Commentf("Couldn't create image"))
+		  RUN echo HI > /file`))
+	id := getIDByName(c, "cpimg")
 
 	// Create an empty test file.
 	tempFile, err := ioutil.TempFile("", "test-events-copy-")
@@ -488,12 +495,12 @@ func (s *DockerSuite) TestEventsCopy(c *check.C) {
 }
 
 func (s *DockerSuite) TestEventsResize(c *check.C) {
-	out, _ := runSleepingContainer(c, "-d")
+	out := runSleepingContainer(c, "-d")
 	cID := strings.TrimSpace(out)
 	c.Assert(waitRun(cID), checker.IsNil)
 
 	endpoint := "/containers/" + cID + "/resize?h=80&w=24"
-	status, _, err := sockRequest("POST", endpoint, nil)
+	status, _, err := request.SockRequest("POST", endpoint, nil, daemonHost())
 	c.Assert(status, checker.Equals, http.StatusOK)
 	c.Assert(err, checker.IsNil)
 
@@ -508,9 +515,9 @@ func (s *DockerSuite) TestEventsAttach(c *check.C) {
 	// TODO Windows CI: Figure out why this test fails intermittently (TP5).
 	testRequires(c, DaemonIsLinux)
 
-	out, _ := dockerCmd(c, "run", "-di", "busybox", "cat")
+	out := cli.DockerCmd(c, "run", "-di", "busybox", "cat").Combined()
 	cID := strings.TrimSpace(out)
-	c.Assert(waitRun(cID), checker.IsNil)
+	cli.WaitRun(c, cID)
 
 	cmd := exec.Command(dockerBinary, "attach", cID)
 	stdin, err := cmd.StdinPipe()
@@ -531,11 +538,11 @@ func (s *DockerSuite) TestEventsAttach(c *check.C) {
 
 	c.Assert(stdin.Close(), checker.IsNil)
 
-	dockerCmd(c, "kill", cID)
-	c.Assert(waitExited(cID, 5*time.Second), checker.IsNil)
+	cli.DockerCmd(c, "kill", cID)
+	cli.WaitExited(c, cID, 5*time.Second)
 
 	until := daemonUnixTime(c)
-	out, _ = dockerCmd(c, "events", "-f", "container="+cID, "--until="+until)
+	out = cli.DockerCmd(c, "events", "-f", "container="+cID, "--until="+until).Combined()
 	c.Assert(out, checker.Contains, "attach", check.Commentf("Missing 'attach' log event"))
 }
 
@@ -554,7 +561,7 @@ func (s *DockerSuite) TestEventsTop(c *check.C) {
 	// Problematic on Windows as Windows does not support top
 	testRequires(c, DaemonIsLinux)
 
-	out, _ := runSleepingContainer(c, "-d")
+	out := runSleepingContainer(c, "-d")
 	cID := strings.TrimSpace(out)
 	c.Assert(waitRun(cID), checker.IsNil)
 
@@ -593,11 +600,9 @@ func (s *DockerSuite) TestEventsFilterType(c *check.C) {
 	label := "io.docker.testing=image"
 
 	// Build a test image.
-	_, err := buildImage(name, fmt.Sprintf(`
+	buildImageSuccessfully(c, name, build.WithDockerfile(fmt.Sprintf(`
 		FROM busybox:latest
-		LABEL %s`, label), true)
-	c.Assert(err, checker.IsNil, check.Commentf("Couldn't create image"))
-
+		LABEL %s`, label)))
 	dockerCmd(c, "tag", name, "labelfiltertest:tag1")
 	dockerCmd(c, "tag", name, "labelfiltertest:tag2")
 	dockerCmd(c, "tag", "busybox:latest", "labelfiltertest:tag3")
@@ -686,7 +691,7 @@ func (s *DockerSuite) TestEventsContainerRestart(c *check.C) {
 
 	// wait until test2 is auto removed.
 	waitTime := 10 * time.Second
-	if daemonPlatform == "windows" {
+	if testEnv.DaemonPlatform() == "windows" {
 		// Windows takes longer...
 		waitTime = 90 * time.Second
 	}

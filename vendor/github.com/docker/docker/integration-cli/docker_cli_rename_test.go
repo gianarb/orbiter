@@ -3,9 +3,9 @@ package main
 import (
 	"strings"
 
-	"github.com/docker/docker/pkg/integration/checker"
-	icmd "github.com/docker/docker/pkg/integration/cmd"
+	"github.com/docker/docker/integration-cli/checker"
 	"github.com/docker/docker/pkg/stringid"
+	icmd "github.com/docker/docker/pkg/testutil/cmd"
 	"github.com/go-check/check"
 )
 
@@ -36,7 +36,7 @@ func (s *DockerSuite) TestRenameRunningContainer(c *check.C) {
 }
 
 func (s *DockerSuite) TestRenameRunningContainerAndReuse(c *check.C) {
-	out, _ := runSleepingContainer(c, "--name", "first_name")
+	out := runSleepingContainer(c, "--name", "first_name")
 	c.Assert(waitRun("first_name"), check.IsNil)
 
 	newName := "new_name"
@@ -46,7 +46,7 @@ func (s *DockerSuite) TestRenameRunningContainerAndReuse(c *check.C) {
 	name := inspectField(c, ContainerID, "Name")
 	c.Assert(name, checker.Equals, "/"+newName, check.Commentf("Failed to rename container"))
 
-	out, _ = runSleepingContainer(c, "--name", "first_name")
+	out = runSleepingContainer(c, "--name", "first_name")
 	c.Assert(waitRun("first_name"), check.IsNil)
 	newContainerID := strings.TrimSpace(out)
 	name = inspectField(c, newContainerID, "Name")
@@ -104,7 +104,7 @@ func (s *DockerSuite) TestRenameAnonymousContainer(c *check.C) {
 	dockerCmd(c, "start", "container1")
 
 	count := "-c"
-	if daemonPlatform == "windows" {
+	if testEnv.DaemonPlatform() == "windows" {
 		count = "-n"
 	}
 
@@ -113,7 +113,7 @@ func (s *DockerSuite) TestRenameAnonymousContainer(c *check.C) {
 }
 
 func (s *DockerSuite) TestRenameContainerWithSameName(c *check.C) {
-	out, _ := runSleepingContainer(c, "--name", "old")
+	out := runSleepingContainer(c, "--name", "old")
 	ContainerID := strings.TrimSpace(out)
 
 	out, _, err := dockerCmdWithError("rename", "old", "old")

@@ -8,10 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution"
-	"github.com/docker/distribution/digest"
+	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/v1"
 	"github.com/docker/docker/layer"
@@ -22,18 +23,15 @@ import (
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/system"
-	"github.com/docker/docker/reference"
+	"github.com/opencontainers/go-digest"
 )
 
 func (l *tarexporter) Load(inTar io.ReadCloser, outStream io.Writer, quiet bool) error {
-	var (
-		sf             = streamformatter.NewJSONStreamFormatter()
-		progressOutput progress.Output
-	)
+	var progressOutput progress.Output
 	if !quiet {
-		progressOutput = sf.NewProgressOutput(outStream, false)
+		progressOutput = streamformatter.NewJSONProgressOutput(outStream, false)
 	}
-	outStream = &streamformatter.StdoutFormatter{Writer: outStream, StreamFormatter: streamformatter.NewJSONStreamFormatter()}
+	outStream = streamformatter.NewStdoutWriter(outStream)
 
 	tmpDir, err := ioutil.TempDir("", "docker-import-")
 	if err != nil {
@@ -80,12 +78,15 @@ func (l *tarexporter) Load(inTar io.ReadCloser, outStream io.Writer, quiet bool)
 		if err != nil {
 			return err
 		}
+		if err := checkCompatibleOS(img.OS); err != nil {
+			return err
+		}
 		var rootFS image.RootFS
 		rootFS = *img.RootFS
 		rootFS.DiffIDs = nil
 
 		if expected, actual := len(m.Layers), len(img.RootFS.DiffIDs); expected != actual {
-			return fmt.Errorf("invalid manifest, layers length mismatch: expected %q, got %q", expected, actual)
+			return fmt.Errorf("invalid manifest, layers length mismatch: expected %d, got %d", expected, actual)
 		}
 
 		for i, diffID := range img.RootFS.DiffIDs {
@@ -117,7 +118,7 @@ func (l *tarexporter) Load(inTar io.ReadCloser, outStream io.Writer, quiet bool)
 
 		imageRefCount = 0
 		for _, repoTag := range m.RepoTags {
-			named, err := reference.ParseNamed(repoTag)
+			named, err := reference.ParseNormalizedNamed(repoTag)
 			if err != nil {
 				return err
 			}
@@ -126,7 +127,7 @@ func (l *tarexporter) Load(inTar io.ReadCloser, outStream io.Writer, quiet bool)
 				return fmt.Errorf("invalid tag %q", repoTag)
 			}
 			l.setLoadedTag(ref, imgID.Digest(), outStream)
-			outStream.Write([]byte(fmt.Sprintf("Loaded image: %s\n", ref)))
+			outStream.Write([]byte(fmt.Sprintf("Loaded image: %s\n", reference.FamiliarString(ref))))
 			imageRefCount++
 		}
 
@@ -201,7 +202,7 @@ func (l *tarexporter) loadLayer(filename string, rootFS image.RootFS, id string,
 
 func (l *tarexporter) setLoadedTag(ref reference.NamedTagged, imgID digest.Digest, outStream io.Writer) error {
 	if prevID, err := l.rs.Get(ref); err == nil && prevID != imgID {
-		fmt.Fprintf(outStream, "The image %s already exists, renaming the old one with ID %s to empty string\n", ref.String(), string(prevID)) // todo: this message is wrong in case of multiple tags
+		fmt.Fprintf(outStream, "The image %s already exists, renaming the old one with ID %s to empty string\n", reference.FamiliarString(ref), string(prevID)) // todo: this message is wrong in case of multiple tags
 	}
 
 	if err := l.rs.AddTag(ref, imgID, true); err != nil {
@@ -249,7 +250,7 @@ func (l *tarexporter) legacyLoad(tmpDir string, outStream io.Writer, progressOut
 			if !ok {
 				return fmt.Errorf("invalid target ID: %v", oldID)
 			}
-			named, err := reference.WithName(name)
+			named, err := reference.ParseNormalizedNamed(name)
 			if err != nil {
 				return err
 			}
@@ -278,8 +279,15 @@ func (l *tarexporter) legacyLoadImage(oldID, sourceDir string, loadedMap map[str
 		return err
 	}
 
-	var img struct{ Parent string }
+	var img struct {
+		OS     string
+		Parent string
+	}
 	if err := json.Unmarshal(imageJSON, &img); err != nil {
+		return err
+	}
+
+	if err := checkCompatibleOS(img.OS); err != nil {
 		return err
 	}
 
@@ -387,4 +395,17 @@ func checkValidParent(img, parent *image.Image) bool {
 		}
 	}
 	return true
+}
+
+func checkCompatibleOS(os string) error {
+	platform := runtime.GOOS
+	// always compatible if the OS matches; also match an empty OS
+	if os == platform || os == "" {
+		return nil
+	}
+	// for compatibility, only fail if the image or runtime OS is Windows
+	if os == "windows" || platform == "windows" {
+		return fmt.Errorf("cannot load %s image on %s", os, platform)
+	}
+	return nil
 }

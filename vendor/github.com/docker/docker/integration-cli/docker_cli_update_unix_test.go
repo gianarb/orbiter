@@ -5,15 +5,16 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/kr/pty"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/docker/docker/integration-cli/checker"
+	"github.com/docker/docker/integration-cli/request"
 	"github.com/docker/docker/pkg/parsers/kernel"
 	"github.com/go-check/check"
+	"github.com/kr/pty"
 )
 
 func (s *DockerSuite) TestUpdateRunningContainer(c *check.C) {
@@ -219,7 +220,7 @@ func (s *DockerSuite) TestUpdateStats(c *check.C) {
 	c.Assert(waitRun(name), checker.IsNil)
 
 	getMemLimit := func(id string) uint64 {
-		resp, body, err := sockRequestRaw("GET", fmt.Sprintf("/containers/%s/stats?stream=false", id), nil, "")
+		resp, body, err := request.Get(fmt.Sprintf("/containers/%s/stats?stream=false", id))
 		c.Assert(err, checker.IsNil)
 		c.Assert(resp.Header.Get("Content-Type"), checker.Equals, "application/json")
 
@@ -280,4 +281,39 @@ func (s *DockerSuite) TestUpdateNotAffectMonitorRestartPolicy(c *check.C) {
 	err = waitInspect(id, "{{.RestartCount}}", "1", 30*time.Second)
 	c.Assert(err, checker.IsNil)
 	c.Assert(waitRun(id), checker.IsNil)
+}
+
+func (s *DockerSuite) TestUpdateWithNanoCPUs(c *check.C) {
+	testRequires(c, cpuCfsQuota, cpuCfsPeriod)
+
+	file1 := "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"
+	file2 := "/sys/fs/cgroup/cpu/cpu.cfs_period_us"
+
+	out, _ := dockerCmd(c, "run", "-d", "--cpus", "0.5", "--name", "top", "busybox", "top")
+	c.Assert(strings.TrimSpace(out), checker.Not(checker.Equals), "")
+
+	out, _ = dockerCmd(c, "exec", "top", "sh", "-c", fmt.Sprintf("cat %s && cat %s", file1, file2))
+	c.Assert(strings.TrimSpace(out), checker.Equals, "50000\n100000")
+
+	out = inspectField(c, "top", "HostConfig.NanoCpus")
+	c.Assert(out, checker.Equals, "5e+08", check.Commentf("setting the Nano CPUs failed"))
+	out = inspectField(c, "top", "HostConfig.CpuQuota")
+	c.Assert(out, checker.Equals, "0", check.Commentf("CPU CFS quota should be 0"))
+	out = inspectField(c, "top", "HostConfig.CpuPeriod")
+	c.Assert(out, checker.Equals, "0", check.Commentf("CPU CFS period should be 0"))
+
+	out, _, err := dockerCmdWithError("update", "--cpu-quota", "80000", "top")
+	c.Assert(err, checker.NotNil)
+	c.Assert(out, checker.Contains, "Conflicting options: CPU Quota cannot be updated as NanoCPUs has already been set")
+
+	out, _ = dockerCmd(c, "update", "--cpus", "0.8", "top")
+	out = inspectField(c, "top", "HostConfig.NanoCpus")
+	c.Assert(out, checker.Equals, "8e+08", check.Commentf("updating the Nano CPUs failed"))
+	out = inspectField(c, "top", "HostConfig.CpuQuota")
+	c.Assert(out, checker.Equals, "0", check.Commentf("CPU CFS quota should be 0"))
+	out = inspectField(c, "top", "HostConfig.CpuPeriod")
+	c.Assert(out, checker.Equals, "0", check.Commentf("CPU CFS period should be 0"))
+
+	out, _ = dockerCmd(c, "exec", "top", "sh", "-c", fmt.Sprintf("cat %s && cat %s", file1, file2))
+	c.Assert(strings.TrimSpace(out), checker.Equals, "80000\n100000")
 }

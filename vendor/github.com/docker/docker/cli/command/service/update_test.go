@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	mounttypes "github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/pkg/testutil/assert"
+	"golang.org/x/net/context"
 )
 
 func TestUpdateServiceArgs(t *testing.T) {
@@ -20,7 +22,7 @@ func TestUpdateServiceArgs(t *testing.T) {
 	cspec := &spec.TaskTemplate.ContainerSpec
 	cspec.Args = []string{"old", "args"}
 
-	updateService(flags, spec)
+	updateService(nil, nil, flags, spec)
 	assert.EqualStringSlice(t, cspec.Args, []string{"the", "new args"})
 }
 
@@ -49,7 +51,7 @@ func TestUpdateLabelsRemoveALabelThatDoesNotExist(t *testing.T) {
 	assert.Equal(t, len(labels), 1)
 }
 
-func TestUpdatePlacement(t *testing.T) {
+func TestUpdatePlacementConstraints(t *testing.T) {
 	flags := newUpdateCommand(nil).Flags()
 	flags.Set("constraint-add", "node=toadd")
 	flags.Set("constraint-rm", "node!=toremove")
@@ -58,10 +60,36 @@ func TestUpdatePlacement(t *testing.T) {
 		Constraints: []string{"node!=toremove", "container=tokeep"},
 	}
 
-	updatePlacement(flags, placement)
+	updatePlacementConstraints(flags, placement)
 	assert.Equal(t, len(placement.Constraints), 2)
 	assert.Equal(t, placement.Constraints[0], "container=tokeep")
 	assert.Equal(t, placement.Constraints[1], "node=toadd")
+}
+
+func TestUpdatePlacementPrefs(t *testing.T) {
+	flags := newUpdateCommand(nil).Flags()
+	flags.Set("placement-pref-add", "spread=node.labels.dc")
+	flags.Set("placement-pref-rm", "spread=node.labels.rack")
+
+	placement := &swarm.Placement{
+		Preferences: []swarm.PlacementPreference{
+			{
+				Spread: &swarm.SpreadOver{
+					SpreadDescriptor: "node.labels.rack",
+				},
+			},
+			{
+				Spread: &swarm.SpreadOver{
+					SpreadDescriptor: "node.labels.row",
+				},
+			},
+		},
+	}
+
+	updatePlacementPreferences(flags, placement)
+	assert.Equal(t, len(placement.Preferences), 2)
+	assert.Equal(t, placement.Preferences[0].Spread.SpreadDescriptor, "node.labels.row")
+	assert.Equal(t, placement.Preferences[1].Spread.SpreadDescriptor, "node.labels.dc")
 }
 
 func TestUpdateEnvironment(t *testing.T) {
@@ -284,6 +312,11 @@ func TestUpdateHealthcheckTable(t *testing.T) {
 			expected: &container.HealthConfig{Test: []string{"CMD", "cmd1"}},
 		},
 		{
+			flags:    [][2]string{{"health-start-period", "1m"}},
+			initial:  &container.HealthConfig{Test: []string{"CMD", "cmd1"}},
+			expected: &container.HealthConfig{Test: []string{"CMD", "cmd1"}, StartPeriod: time.Minute},
+		},
+		{
 			flags: [][2]string{{"health-cmd", "cmd1"}, {"no-healthcheck", "true"}},
 			err:   "--no-healthcheck conflicts with --health-* options",
 		},
@@ -360,25 +393,104 @@ func TestUpdatePortsRmWithProtocol(t *testing.T) {
 	assert.Equal(t, portConfigs[1].TargetPort, uint32(82))
 }
 
-// FIXME(vdemeester) port to opts.PortOpt
-func TestValidatePort(t *testing.T) {
-	validPorts := []string{"80/tcp", "80", "80/udp"}
-	invalidPorts := map[string]string{
-		"9999999":   "out of range",
-		"80:80/tcp": "invalid port format",
-		"53:53/udp": "invalid port format",
-		"80:80":     "invalid port format",
-		"80/xyz":    "invalid protocol",
-		"tcp":       "invalid syntax",
-		"udp":       "invalid syntax",
-		"":          "invalid protocol",
+type secretAPIClientMock struct {
+	listResult []swarm.Secret
+}
+
+func (s secretAPIClientMock) SecretList(ctx context.Context, options types.SecretListOptions) ([]swarm.Secret, error) {
+	return s.listResult, nil
+}
+func (s secretAPIClientMock) SecretCreate(ctx context.Context, secret swarm.SecretSpec) (types.SecretCreateResponse, error) {
+	return types.SecretCreateResponse{}, nil
+}
+func (s secretAPIClientMock) SecretRemove(ctx context.Context, id string) error {
+	return nil
+}
+func (s secretAPIClientMock) SecretInspectWithRaw(ctx context.Context, name string) (swarm.Secret, []byte, error) {
+	return swarm.Secret{}, []byte{}, nil
+}
+func (s secretAPIClientMock) SecretUpdate(ctx context.Context, id string, version swarm.Version, secret swarm.SecretSpec) error {
+	return nil
+}
+
+// TestUpdateSecretUpdateInPlace tests the ability to update the "target" of an secret with "docker service update"
+// by combining "--secret-rm" and "--secret-add" for the same secret.
+func TestUpdateSecretUpdateInPlace(t *testing.T) {
+	apiClient := secretAPIClientMock{
+		listResult: []swarm.Secret{
+			{
+				ID:   "tn9qiblgnuuut11eufquw5dev",
+				Spec: swarm.SecretSpec{Annotations: swarm.Annotations{Name: "foo"}},
+			},
+		},
 	}
-	for _, port := range validPorts {
-		_, err := validatePublishRemove(port)
-		assert.Equal(t, err, nil)
+
+	flags := newUpdateCommand(nil).Flags()
+	flags.Set("secret-add", "source=foo,target=foo2")
+	flags.Set("secret-rm", "foo")
+
+	secrets := []*swarm.SecretReference{
+		{
+			File: &swarm.SecretReferenceFileTarget{
+				Name: "foo",
+				UID:  "0",
+				GID:  "0",
+				Mode: 292,
+			},
+			SecretID:   "tn9qiblgnuuut11eufquw5dev",
+			SecretName: "foo",
+		},
 	}
-	for port, e := range invalidPorts {
-		_, err := validatePublishRemove(port)
-		assert.Error(t, err, e)
-	}
+
+	updatedSecrets, err := getUpdatedSecrets(apiClient, flags, secrets)
+
+	assert.Equal(t, err, nil)
+	assert.Equal(t, len(updatedSecrets), 1)
+	assert.Equal(t, updatedSecrets[0].SecretID, "tn9qiblgnuuut11eufquw5dev")
+	assert.Equal(t, updatedSecrets[0].SecretName, "foo")
+	assert.Equal(t, updatedSecrets[0].File.Name, "foo2")
+}
+
+func TestUpdateReadOnly(t *testing.T) {
+	spec := &swarm.ServiceSpec{}
+	cspec := &spec.TaskTemplate.ContainerSpec
+
+	// Update with --read-only=true, changed to true
+	flags := newUpdateCommand(nil).Flags()
+	flags.Set("read-only", "true")
+	updateService(nil, nil, flags, spec)
+	assert.Equal(t, cspec.ReadOnly, true)
+
+	// Update without --read-only, no change
+	flags = newUpdateCommand(nil).Flags()
+	updateService(nil, nil, flags, spec)
+	assert.Equal(t, cspec.ReadOnly, true)
+
+	// Update with --read-only=false, changed to false
+	flags = newUpdateCommand(nil).Flags()
+	flags.Set("read-only", "false")
+	updateService(nil, nil, flags, spec)
+	assert.Equal(t, cspec.ReadOnly, false)
+}
+
+func TestUpdateStopSignal(t *testing.T) {
+	spec := &swarm.ServiceSpec{}
+	cspec := &spec.TaskTemplate.ContainerSpec
+
+	// Update with --stop-signal=SIGUSR1
+	flags := newUpdateCommand(nil).Flags()
+	flags.Set("stop-signal", "SIGUSR1")
+	updateService(nil, nil, flags, spec)
+	assert.Equal(t, cspec.StopSignal, "SIGUSR1")
+
+	// Update without --stop-signal, no change
+	flags = newUpdateCommand(nil).Flags()
+	updateService(nil, nil, flags, spec)
+	assert.Equal(t, cspec.StopSignal, "SIGUSR1")
+
+	// Update with --stop-signal=SIGWINCH
+	flags = newUpdateCommand(nil).Flags()
+	flags.Set("stop-signal", "SIGWINCH")
+	updateService(nil, nil, flags, spec)
+	assert.Equal(t, cspec.StopSignal, "SIGWINCH")
 }
