@@ -40,9 +40,10 @@ func (p SwarmProvider) Name() string {
 func (p SwarmProvider) Scale(serviceId string, target int, direction bool) error {
 	ctx := context.Background()
 	// Correct bug #41 using docker/docker v17.06.1-ce-rc4
-	siopts := types.ServiceInspectOptions{}
-	siopts.InsertDefaults = true
-	service, _, err := p.dockerClient.ServiceInspectWithRaw(ctx, serviceId, siopts)
+	// Service inspect returns a service showing default values in empty fields
+	service, _, err := p.dockerClient.ServiceInspectWithRaw(ctx, serviceId, types.ServiceInspectOptions{
+		InsertDefaults: true,
+	})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
 			"error":    err.Error(),
