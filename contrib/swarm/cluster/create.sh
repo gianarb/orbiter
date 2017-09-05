@@ -15,7 +15,6 @@ docker-machine ssh sw1 docker swarm init --advertise-addr ${MANAGER_IP}
 TOKEN=$(docker-machine ssh sw1 docker swarm join-token -q worker)
 docker-machine ssh sw2 docker swarm join --token ${TOKEN} ${MANAGER_IP}:2377
 docker-machine ssh sw3 docker swarm join --token ${TOKEN} ${MANAGER_IP}:2377
-docker-machine ssh sw4 docker swarm join --token ${TOKEN} ${MANAGER_IP}:2377
 
 # Information
 echo ""
