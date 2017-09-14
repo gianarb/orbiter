@@ -2,6 +2,7 @@ out_binary=bin/orbiter
 docker_image_fqdn=docker.io/gianarb/orbiter
 PACKAGES=$(shell go list ./... | grep -v /vendor/)
 RACE=$(shell test $$(go env GOARCH) != "amd64" || (echo "-race"))
+REV ?= $$(git rev-parse --short=7 HEAD)
 
 .PHONY: build
 build: clean $(out_binary)

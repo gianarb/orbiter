@@ -4,12 +4,12 @@ go:
 services:
   - docker
 script:
-  #- sudo PATH=$PATH GOPATH=$GOPATH make ci binaries
+  - docker login -u $DOCKER_USER -p $DOCKER_PASS
   - make ci
+  - docker build -f Dockerfile -t gianarb/orbiter:$(git rev-parse --short=7 HEAD) .
+  - docker push gianarb/orbiter:$(git rev-parse --short=7 HEAD)
 after_success:
-  - if [ "$TRAVIS_BRANCH" == "master" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ]; docker login -u $DOCKER_USER -p $DOCKER_PASS
-  - export REPO=gianarb/orbiter
-  - if [ "$TRAVIS_BRANCH" == "master" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ]; then docker build -f Dockerfile -t $REPO . && docker push $REPO; else echo "I only push from master branch." ; fi
+  - if [ "$TRAVIS_BRANCH" == "master" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ]; then docker tag gianarb/orbiter:$(git rev-parse --short=7 HEAD) gianarb/orbiter . && docker push gianarb/orbiter; fi
 env:
   global:
     - secure: "MN7hNDnx47U9ZCg78GjEGDH5//lLfVzCKnJyPdT4jpYWM05pDB1rPrNwIPZOVuz4XT/x07Oa5M695Pkt61L+yVVfs+AUN6bYwffKWRU0T1dvXzJneB64JQeIGkqyiAHAmrjlpgzOgfB7EcmH4aEFq1HXYCqrvIgAX75D9l/T3xuRXdIzyVLzD3CZZQSZK5cFT37niofMvHoJgmBg5u8FEd2yR2M2LJGbIpXuB3UOn2yqRZHELVg12zhOwgqE+sQtqzBwirx9GObo5x4Nh7AWHIEN/K4BsxMXwZcWSySb0QxRtPpeyiItdDNr62W2MHpyEy//0sJwC5FFhsBzGfSlLpTV+YPrmaXju81JddQVyaB7l6gR3qnwrEywlLBSU3K71FJTHerq23KQV5p50JKA0oYAkKzDtaj0yJAXpFXZbXQq1cOVQidz7Suhi5ZsobI1bzWb5gELCeqCXr0aweTQXqch7Uom4qhIf6aK961F5dvUubzYcgKqbGRBp2F72rls2+9AvnQwUHnPC574sv88oTj0JrDDZoku4vBqSgNkOOICtekBNnksAZLbWasom/+ksqGyZX8qlbf1LLfhwVLqdFgWXrHggO8r8rh8i9MyON0K04hnTHsPHU8+kmbtzZwbXwnVmrJlWnlpolt5CT5XbaPpPwDxvoYsKx0WoYsmZ20="
