@@ -1,0 +1,205 @@
+{
+  "autoscaler": {
+    "data": [
+      {
+        "name": "autoswarm/frontend",
+        "replicas": 4
+      },
+      {
+        "name": "autoswarm/backend",
+        "replicas": 8
+      },
+      {
+        "name": "autoswarm/gateway",
+        "replicas": 2
+      },
+      {
+        "name": "autoswarm/monitoring",
+        "replicas": 1
+      }
+    ]
+  },
+  "health": {
+    "status": true,
+    "info": {}
+  },
+  "events": {
+
+  },
+  "services-inspect": [
+    {
+      "id": "frontend",
+      "version": {
+        "index": 418
+      },
+      "createdAt": "2016-06-16T21:57:11.622222327Z",
+      "updatedAt": "2016-06-16T21:57:11.622222327Z",
+      "spec": {
+        "name": "frontend",
+        "taskTemplate": {
+          "containerSpec": {
+            "image": "alpine",
+            "args": [
+              "ping",
+              "docker.com"
+            ]
+          },
+          "resources": {
+            "limits": {},
+            "reservations": {}
+          },
+          "restartPolicy": {
+            "condition": "any",
+            "maxAttempts": 0
+          },
+          "placement": {}
+        },
+        "mode": {
+          "replicated": {
+            "replicas": 4
+          }
+        },
+        "updateConfig": {
+          "parallelism": 1
+        },
+        "endpointSpec": {
+          "mode": "vip"
+        }
+      },
+      "endpoint": {
+        "spec": {}
+      }
+    },
+    {
+      "id": "backend",
+      "version": {
+        "index": 48
+      },
+      "createdAt": "2016-06-16T21:57:11.622222327Z",
+      "updatedAt": "2016-06-16T21:57:11.622222327Z",
+      "spec": {
+        "name": "backend",
+        "taskTemplate": {
+          "containerSpec": {
+            "image": "alpine",
+            "args": [
+              "ping",
+              "docker.com"
+            ]
+          },
+          "resources": {
+            "limits": {},
+            "reservations": {}
+          },
+          "restartPolicy": {
+            "condition": "any",
+            "maxAttempts": 0
+          },
+          "placement": {}
+        },
+        "mode": {
+          "replicated": {
+            "replicas": 8
+          }
+        },
+        "updateConfig": {
+          "parallelism": 1
+        },
+        "endpointSpec": {
+          "mode": "vip"
+        }
+      },
+      "endpoint": {
+        "spec": {}
+      }
+    },
+    {
+      "id": "gateway",
+      "version": {
+        "index": 418
+      },
+      "createdAt": "2016-06-16T21:57:11.622222327Z",
+      "updatedAt": "2016-06-16T21:57:11.622222327Z",
+      "spec": {
+        "name": "gateway",
+        "taskTemplate": {
+          "containerSpec": {
+            "image": "alpine",
+            "args": [
+              "ping",
+              "docker.com"
+            ]
+          },
+          "resources": {
+            "limits": {},
+            "reservations": {}
+          },
+          "restartPolicy": {
+            "condition": "any",
+            "maxAttempts": 0
+          },
+          "placement": {}
+        },
+        "mode": {
+          "replicated": {
+            "replicas": 2
+          }
+        },
+        "updateConfig": {
+          "parallelism": 1
+        },
+        "endpointSpec": {
+          "mode": "vip"
+        }
+      },
+      "endpoint": {
+        "spec": {}
+      }
+    },
+    {
+      "id": "monitoring",
+      "version": {
+        "index": 418
+      },
+      "createdAt": "2016-06-16T21:57:11.622222327Z",
+      "updatedAt": "2016-06-16T21:57:11.622222327Z",
+      "spec": {
+        "name": "monitoring",
+        "taskTemplate": {
+          "containerSpec": {
+            "image": "alpine",
+            "args": [
+              "ping",
+              "docker.com"
+            ]
+          },
+          "resources": {
+            "limits": {},
+            "reservations": {}
+          },
+          "restartPolicy": {
+            "condition": "any",
+            "maxAttempts": 0
+          },
+          "placement": {}
+        },
+        "mode": {
+          "replicated": {
+            "replicas": 1
+          }
+        },
+        "updateConfig": {
+          "parallelism": 1
+        },
+        "endpointSpec": {
+          "mode": "vip"
+        }
+      },
+      "endpoint": {
+        "spec": {}
+      }
+    }
+  ],
+  "services-scale-up": [],
+  "services-scale-down": []
+}

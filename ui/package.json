@@ -4,12 +4,12 @@
   "description": "UI for orbiter autoscaler",
   "main": "index.js",
   "scripts": {
-    "dev": "next",
+    "dev": "next & node api/server.js",
     "build": "next build",
     "start": "next start",
-    "test": "standard && npm list 1>/dev/null",
-    "precommit": "npm test",
-    "prepush": "npm test"
+    "lint": "standard",
+    "lint:fix": "standard --fix",
+    "test": "npm list 1>/dev/null"
   },
   "repository": {
     "type": "git",
@@ -22,13 +22,16 @@
   },
   "homepage": "https://github.com/gianarb/orbiter/ui",
   "dependencies": {
+    "babel-plugin-inline-dotenv": "^1.1.1",
+    "babel-plugin-transform-inline-environment-variables": "^0.2.0",
+    "isomorphic-fetch": "^2.2.1",
     "next": "^3.0.6",
     "react": "^15.6.1",
     "react-dom": "^15.6.1",
     "semantic-ui-react": "^0.72.0"
   },
   "devDependencies": {
-    "husky": "^0.14.3",
+    "json-server": "^0.12.0",
     "standard": "^10.0.3"
   }
 }

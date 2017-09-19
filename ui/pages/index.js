@@ -1,29 +1,86 @@
-import Head from 'next/head'
+import React from 'react'
 import Link from 'next/link'
 
-import { Container, Header, Menu, Segment } from 'semantic-ui-react'
+import 'isomorphic-fetch' /* global fetch */
 
-export default () => (
-  <div>
-    <Head>
-      <link rel='stylesheet' href='//cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.2.12/semantic.min.css' />
-    </Head>
-    <Menu fixed='top' inverted>
-      <Container>
-        <Link href='/'>
-          <a className='header item'>
-            <img className='ui mini image' src='/static/logo-round.svg' style={{ marginRight: '1.5em' }} /> Orbiter UI
-          </a>
-        </Link>
-      </Container>
-    </Menu>
-    <Container style={{ marginTop: '6em' }}>
-      <Header as='h1' dividing>Dashboard</Header>
-      <Segment>Service 1</Segment>
-      <Segment>Service 2</Segment>
-      <Segment>Service 3</Segment>
-      <Segment>Service 4</Segment>
-      <Segment>Service 5</Segment>
-    </Container>
-  </div>
-)
+import {Button, Grid, Header, Segment} from 'semantic-ui-react'
+
+import Layout from '../components/layout'
+
+const MIN_REPLICAS = 1
+
+export default class extends React.Component {
+  static async getInitialProps () {
+    const res = await fetch(`${process.env.API_HOST}/autoscaler`)
+    const json = await res.json()
+    return {
+      services: json.data
+    }
+  }
+
+  constructor (props) {
+    super(props)
+    this.state = {
+      services: props.services
+    }
+  }
+
+  scaleUp (serviceName) {
+    fetch(`${process.env.API_HOST}/handle/${serviceName}/up`, {
+      method: 'POST',
+      body: {}  // just pass the instance
+    }).then(response => {
+      if (response.status === 201) {
+        // TODO: update react state manipulation with a better approach
+        const service = this.state.services.find(item => item.name === serviceName)
+        const others = this.state.services.filter(item => item.name !== serviceName)
+        this.setState({ services: [...others, { name: service.name, replicas: service.replicas + 1 }] })
+      }
+    })
+  }
+
+  scaleDown (serviceName) {
+    fetch(`${process.env.API_HOST}/handle/${serviceName}/down`, {
+      method: 'POST',
+      body: {}  // just pass the instance
+    }).then(response => {
+      if (response.status === 201) {
+        // TODO: update react state manipulation with a better approach
+        const service = this.state.services.find(item => item.name === serviceName)
+        const others = this.state.services.filter(item => item.name !== serviceName)
+        this.setState({ services: [...others, { name: service.name, replicas: service.replicas - 1 }] })
+      }
+    })
+  }
+
+  render () {
+    return (
+      <Layout title='Dashboard'>
+        {
+          this.state.services
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(service => (
+              <Segment key={service.name}>
+                <Grid>
+                  <Grid.Column width={8} style={{ display: 'flex', alignItems: 'center' }}>
+                    <Header as='h3'>
+                      <Link href={{ pathname: '/service', query: { name: service.name } }}>
+                        <a>{ service.name }</a>
+                      </Link>
+                    </Header>
+                  </Grid.Column>
+                  <Grid.Column width={4} style={{ display: 'flex', alignItems: 'center' }}>
+                    <Header as='h3'>{ service.replicas }</Header>
+                  </Grid.Column>
+                  <Grid.Column floated='right' width={4} style={{ textAlign: 'right' }}>
+                    <Button icon='plus' onClick={() => { this.scaleUp(service.name) }} />
+                    <Button icon='minus' disabled={service.replicas <= MIN_REPLICAS} onClick={() => { this.scaleDown(service.name) }} />
+                  </Grid.Column>
+                </Grid>
+              </Segment>
+            ))
+        }
+      </Layout>
+    )
+  }
+}
