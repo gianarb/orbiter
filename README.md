@@ -68,11 +68,11 @@ DigitalOcean called `infra_scale`.
   configure your provider.
 * autoscaler` is composed by provider, parameters and policies. You can have
   one or more.
-* autoscaler has only or more policies they contains information about a
+* autoscaler has one or more policies that contain information about a
   specific application.
 
-You can have only one autoscaler or more with th same provider. Same for
-policies, only one or more. Doesn't matter.
+You can have one or more autoscaler with the same provider. Same for
+policies, one or more. Doesn't matter.
 
 ## Http API
 Orbiter exposes an HTTP JSON api that you can use to trigger scaling UP (true)
@@ -100,7 +100,7 @@ curl -v -X GET http://localhost:8000/v1/orbiter/autoscaler
 Look at the health to know if everything is working:
 
 ```sh
-curl -v -X GET http://localhost:8000/v1/orbiter/halth
+curl -v -X GET http://localhost:8000/v1/orbiter/health
 ```
 
 ## Autodetect
@@ -111,9 +111,9 @@ If you start oribter with the command:
 orbiter daemon
 ```
 
-It's going to start in autodetect mode. This modality at the moment only fetch
-for Docker SwarmMode. It use the environment variables DOCKER_HOST and so on to
-locate a Docker daemon. If it's in SwarmMode orbiter is going to look at all the
+It's going to start in autodetect mode. This modality at the moment only fetches
+for Docker SwarmMode. It uses the environment variables DOCKER_HOST (and others) to
+locate a Docker daemon. If it's in SwarmMode, orbiter is going to look at all the
 services currently running.
 
 If a service is labeled with `orbiter=true` it's going to auto-register the
@@ -128,21 +128,21 @@ When you start orbiter, it's going to auto-register an autoscaler called
 `autoswarm/web`. By default up and down are set to 1 but you can override
 them with the label `orbiter.up=3` and `orbiter.down=2`.
 
-This calability allow you to istantiate orbiter in an extremely easy way in
+This scalability allows you to instantiate orbiter in an extremely easy way in
 Docker Swarm.
 
 ## Embeddable
-This project is trying to provide also an easy API to maintain a lot complexy
-and clean code base in order to allow you to use `orbiter` as project for your
+This project is trying to also provide an easy API to maintain a lot of complex
+and clean code bases in order to allow you to use `orbiter` as project for your
 applications.
 OpenStack, Kubernets all of them have a sort of autoscaling feature that you can
-use. The idea is to keep this complexy out of your deployment tools. You can
+use. The idea is to keep this complexity out of your deployment tools. You can
 just implement `orbiter`.
 Another use case is a self-deployed application. [Kelsey
 Hightower](https://www.youtube.com/watch?v=nhmAyZNlECw) had a talk about this
 idea. I am still not sure that can be real in those terms but we are already
 moving something in our applications that before was in external system as
-monitoring, healthcheck why not the deployment part?
+monitoring, healthcheck, so why not the deployment part?
 
 ```go
 package scalingallthethings
@@ -164,7 +164,7 @@ func CreateAutoScaler() *autoscaler.Autoscaler{
 ```sh
 docker run -it -v ${PWD}/your.yml:/etc/orbiter.yml -p 8000:8000 gianarb/orbiter daemon
 ```
-We are supporting an imag `gianarb/orbiter` in hub.docker.com. You can run it
+We are supporting an image `gianarb/orbiter` in hub.docker.com. You can run it
 with your configuration.
 
 In this example I am using volumes but if you have a Docker Swarm 1.13 up and
