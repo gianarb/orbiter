@@ -1,5 +1,5 @@
 out_binary=bin/orbiter
-docker_image_fqdn=docker.io/gianarb/orbiter
+docker_image_fqdn=gianarb/orbiter
 PACKAGES=$(shell go list ./... | grep -v /vendor/)
 RACE=$(shell test $$(go env GOARCH) != "amd64" || (echo "-race"))
 REV ?= $$(git rev-parse --short=7 HEAD)
@@ -17,6 +17,13 @@ bin:
 .PHONY: build/docker-image
 docker-image:
 	docker build -t $(docker_image_fqdn):latest .
+
+docker-commit-publish: docker-image
+	docker tag $(docker_image_fqdn):latest $(docker_image_fqdn):${REV}
+	docker push $(docker_image_fqdn):${REV}
+
+docker-latest-publish:
+	docker push $(docker_image_fqdn):latest
 
 .PHONY: clean
 help: ## this help

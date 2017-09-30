@@ -1,4 +1,4 @@
-FROM golang:1.8.3
+FROM golang:1.8.3 as builder
 
 RUN mkdir -p /go/src/github.com/gianarb/orbiter
 ADD . /go/src/github.com/gianarb/orbiter/
