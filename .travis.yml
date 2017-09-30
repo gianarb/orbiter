@@ -1,9 +1,8 @@
 language: go
 go:
   - tip
-services:
-  - docker
 script:
+  - curl -fsSL https://get.docker.com/ | sudo sh
   - docker login -u $DOCKER_USER -p $DOCKER_PASS
   - make ci docker-commit-publish
 after_success:
