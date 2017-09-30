@@ -4,10 +4,10 @@
 [![Build
 Status](https://travis-ci.org/gianarb/orbiter.svg?branch=master)](https://travis-ci.org/gianarb/orbiter)
 
-Orbiter is an easy to run autoscaler for Docker Swarm. It is designed to be
-automatic and easy.
+Orbiter is an easy to run autoscaler for Docker Swarm. It is designed to work
+out of the box.
 
-We designed in collaboration with InfluxData to show how metrics can be used to
+We designed it in collaboration with InfluxData to show how metrics can be used to
 create automation around Docker tasks.
 
 
